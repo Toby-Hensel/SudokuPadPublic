@@ -1,0 +1,142 @@
+.collab-dock {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 9999;
+  width: min(320px, calc(100vw - 24px));
+  border: 1px solid rgba(124, 245, 191, 0.18);
+  border-radius: 18px;
+  background: rgba(6, 16, 23, 0.9);
+  color: #eff7fb;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(16px);
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+}
+
+.collab-dock * {
+  box-sizing: border-box;
+}
+
+.collab-dock__head,
+.collab-dock__body {
+  padding: 14px 16px;
+}
+
+.collab-dock__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.collab-dock__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.collab-dock__status {
+  font-size: 0.8rem;
+  color: #98c8db;
+}
+
+.collab-dock__status::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.collab-dock__status[data-state="live"] {
+  color: #7cf5bf;
+}
+
+.collab-dock__status[data-state="offline"] {
+  color: #ff8b7f;
+}
+
+.collab-dock__body {
+  display: grid;
+  gap: 12px;
+}
+
+.collab-dock__label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8aa4b3;
+}
+
+.collab-dock__input,
+.collab-dock__meta {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #eff7fb;
+  font: inherit;
+}
+
+.collab-dock__meta {
+  font-size: 0.88rem;
+  color: #c8d7df;
+}
+
+.collab-dock__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.collab-dock__button {
+  flex: 1;
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  padding: 10px 12px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.collab-dock__button--primary {
+  color: #072215;
+  background: linear-gradient(135deg, #7cf5bf, #b8ffd8);
+}
+
+.collab-dock__button--secondary {
+  color: #eff7fb;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.collab-dock__peers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.collab-dock__peer {
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  color: #d5e4ec;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+@media (max-width: 720px) {
+  .collab-dock {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+  }
+}

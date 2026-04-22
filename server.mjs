@@ -11,6 +11,7 @@ const publicDir = join(__dirname, "public");
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "0.0.0.0";
 const upstreamOrigin = process.env.UPSTREAM_ORIGIN || "https://sudokupad.app";
+const assetVersion = process.env.RENDER_GIT_COMMIT || "dev";
 const rooms = new Map();
 
 const publicContentTypes = {
@@ -205,14 +206,14 @@ async function servePublicAsset(res, pathname) {
 
   res.writeHead(200, {
     "content-type": contentType,
-    "cache-control": "public, max-age=300"
+    "cache-control": "no-store"
   });
   res.end(content);
 }
 
 function injectCollabAssets(html) {
-  const headTag = '<link rel="stylesheet" href="/assets/collab-client.css">';
-  const scriptTag = '<script src="/assets/collab-client.js" defer></script>';
+  const headTag = `<link rel="stylesheet" href="/assets/collab-client.css?v=${assetVersion}">`;
+  const scriptTag = `<script src="/assets/collab-client.js?v=${assetVersion}" defer></script>`;
   return html
     .replace("</head>", `${headTag}\n</head>`)
     .replace("</body>", `${scriptTag}\n</body>`);

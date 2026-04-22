@@ -1,0 +1,12 @@
+{
+  "name": "sudokupad-collab-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

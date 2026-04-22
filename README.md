@@ -30,6 +30,16 @@ Once the site is deployed, they only open the public link in a browser.
 11. Open the public `onrender.com` URL Render gives you.
 12. Paste a SudokuPad link, create a collaboration link, and send that link to anyone you want.
 
+### After that
+
+Render is now configured to redeploy automatically on every push to the linked branch.
+
+That means:
+
+- you push changes to GitHub
+- Render notices the new commit
+- Render rebuilds and updates the public server automatically
+
 ### Files added for public hosting
 
 - `render.yaml`

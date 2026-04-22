@@ -30,6 +30,10 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.collab-dock__head-main {
+  min-width: 0;
+}
+
 .collab-dock__title {
   font-size: 0.95rem;
   font-weight: 700;
@@ -62,6 +66,14 @@
 .collab-dock__body {
   display: grid;
   gap: 12px;
+}
+
+.collab-dock--minimized .collab-dock__body {
+  display: none;
+}
+
+.collab-dock--minimized .collab-dock__head {
+  border-bottom: 0;
 }
 
 .collab-dock__label {
@@ -115,6 +127,22 @@
   color: #eff7fb;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.collab-dock__toggle {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #eff7fb;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .collab-dock__peers {

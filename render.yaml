@@ -5,4 +5,4 @@ services:
     buildCommand: echo "No build step needed"
     startCommand: npm start
     healthCheckPath: /api/health
-    autoDeployTrigger: off
+    autoDeployTrigger: commit

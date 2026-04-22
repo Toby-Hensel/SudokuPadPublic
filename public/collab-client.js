@@ -54,6 +54,13 @@
     window.location.href = inviteLink;
   });
 
+  ui.toggleButton.addEventListener("click", () => {
+    const minimized = ui.dock.classList.toggle("collab-dock--minimized");
+    ui.toggleButton.textContent = minimized ? "+" : "-";
+    ui.toggleButton.setAttribute("aria-label", minimized ? "Expand live collaboration panel" : "Minimize live collaboration panel");
+    ui.toggleButton.title = minimized ? "Expand" : "Minimize";
+  });
+
   ui.nameInput.addEventListener("change", () => {
     state.name = ui.nameInput.value.trim() || state.name;
     localStorage.setItem(nameKey, state.name);
@@ -88,8 +95,11 @@
     dock.className = "collab-dock";
     dock.innerHTML = `
       <div class="collab-dock__head">
-        <div class="collab-dock__title">Live Collaboration</div>
-        <div class="collab-dock__status" data-state="offline">Connecting</div>
+        <div class="collab-dock__head-main">
+          <div class="collab-dock__title">Live Collaboration</div>
+          <div class="collab-dock__status" data-state="offline">Connecting</div>
+        </div>
+        <button class="collab-dock__toggle" type="button" aria-label="Minimize live collaboration panel" title="Minimize">-</button>
       </div>
       <div class="collab-dock__body">
         <label class="collab-dock__label">
@@ -115,6 +125,7 @@
     return {
       dock,
       status: dock.querySelector(".collab-dock__status"),
+      toggleButton: dock.querySelector(".collab-dock__toggle"),
       nameInput: dock.querySelector(".collab-dock__input"),
       meta: dock.querySelector(".collab-dock__meta"),
       copyButton: dock.querySelector(".collab-dock__button--primary"),

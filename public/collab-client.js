@@ -33,6 +33,7 @@
     presenceTimer: null,
     reconnectTimer: null,
     healthTimer: null,
+    syncTimer: null,
     reconnectAttempts: 0,
     lastStreamEventAt: 0,
     lastLiveAt: 0,
@@ -77,6 +78,7 @@
   waitForSudokuPad()
     .then(() => {
       state.ready = true;
+      patchActionBroadcasting();
       patchProgressSaving();
       startRealtime();
       state.presenceTimer = window.setInterval(sendPresence, 20_000);
@@ -93,6 +95,9 @@
     }
     if (state.healthTimer) {
       window.clearInterval(state.healthTimer);
+    }
+    if (state.syncTimer) {
+      window.clearInterval(state.syncTimer);
     }
     if (state.reconnectTimer) {
       window.clearTimeout(state.reconnectTimer);
@@ -216,7 +221,8 @@
   function getReplayPayload() {
     const framework = getFramework();
     const replayApi = getReplayApi();
-    const replay = replayApi.fixReplay(replayApi.decode(framework.app.getReplay({ noStates: true })));
+    const replay = replayApi.create(framework.app.puzzle);
+    replay.actions = [...(replay.actions || [])].filter((action) => typeof action === "string" && action.length > 0);
     return replay;
   }
 
@@ -327,8 +333,27 @@
     }, 10_000);
   }
 
+  function ensureSyncMonitor() {
+    if (state.syncTimer) {
+      return;
+    }
+
+    state.syncTimer = window.setInterval(() => {
+      if (state.destroyed || !state.ready || state.applyingRemote) {
+        return;
+      }
+
+      const replay = getReplayPayload();
+      const hash = getReplayHash(replay);
+      if (hash !== state.lastSentHash && hash !== state.inFlightHash) {
+        scheduleBroadcast();
+      }
+    }, 750);
+  }
+
   function startRealtime() {
     ensureHealthMonitor();
+    ensureSyncMonitor();
     connectStream();
     sendPresence();
   }
@@ -548,5 +573,23 @@
       return result;
     };
     puzzle.__collabPatched = true;
+  }
+
+  function patchActionBroadcasting() {
+    const puzzle = getFramework().app.puzzle;
+
+    if (puzzle.__collabActPatched) {
+      return;
+    }
+
+    const original = puzzle.act.bind(puzzle);
+    puzzle.act = (...args) => {
+      const result = original(...args);
+      if (!state.applyingRemote) {
+        scheduleBroadcast();
+      }
+      return result;
+    };
+    puzzle.__collabActPatched = true;
   }
 })();

@@ -30,7 +30,13 @@
     lastSentHash: "",
     inFlightHash: "",
     broadcastTimer: null,
-    presenceTimer: null
+    presenceTimer: null,
+    reconnectTimer: null,
+    healthTimer: null,
+    reconnectAttempts: 0,
+    lastStreamEventAt: 0,
+    lastLiveAt: 0,
+    destroyed: false
   };
 
   sessionStorage.setItem(clientIdKey, state.clientId);
@@ -72,8 +78,7 @@
     .then(() => {
       state.ready = true;
       patchProgressSaving();
-      connectStream();
-      sendPresence();
+      startRealtime();
       state.presenceTimer = window.setInterval(sendPresence, 20_000);
     })
     .catch((error) => {
@@ -82,8 +87,15 @@
     });
 
   window.addEventListener("beforeunload", () => {
+    state.destroyed = true;
     if (state.presenceTimer) {
       window.clearInterval(state.presenceTimer);
+    }
+    if (state.healthTimer) {
+      window.clearInterval(state.healthTimer);
+    }
+    if (state.reconnectTimer) {
+      window.clearTimeout(state.reconnectTimer);
     }
     if (state.eventSource) {
       state.eventSource.close();
@@ -260,6 +272,67 @@
     state.broadcastTimer = window.setTimeout(pushLocalReplay, 180);
   }
 
+  function markStreamActivity() {
+    state.lastStreamEventAt = Date.now();
+  }
+
+  function clearReconnectTimer() {
+    if (state.reconnectTimer) {
+      window.clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
+  }
+
+  function closeEventSource() {
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+  }
+
+  function scheduleReconnect(reason = "Reconnecting") {
+    if (state.destroyed) {
+      return;
+    }
+
+    closeEventSource();
+    clearReconnectTimer();
+    state.live = false;
+    state.reconnectAttempts += 1;
+    setStatus(reason, "offline");
+
+    const delayMs = Math.min(10_000, 1_000 * Math.pow(1.6, Math.max(0, state.reconnectAttempts - 1)));
+    state.reconnectTimer = window.setTimeout(() => {
+      connectStream();
+    }, delayMs);
+  }
+
+  function ensureHealthMonitor() {
+    if (state.healthTimer) {
+      return;
+    }
+
+    state.healthTimer = window.setInterval(() => {
+      if (state.destroyed || !state.ready) {
+        return;
+      }
+
+      const silenceMs = Date.now() - state.lastStreamEventAt;
+      if (state.live && silenceMs > 35_000) {
+        scheduleReconnect("Reconnecting");
+        fetchInitialSnapshot().catch(() => {});
+      } else if (!state.live && !state.reconnectTimer) {
+        connectStream();
+      }
+    }, 10_000);
+  }
+
+  function startRealtime() {
+    ensureHealthMonitor();
+    connectStream();
+    sendPresence();
+  }
+
   async function pushLocalReplay() {
     if (!state.ready || state.applyingRemote) {
       return;
@@ -298,6 +371,7 @@
     } catch (error) {
       console.error("Local replay push failed:", error);
       setStatus("Reconnecting", "offline");
+      scheduleReconnect("Reconnecting");
     } finally {
       const completedHash = state.inFlightHash;
       state.inFlightHash = "";
@@ -393,6 +467,7 @@
     }
 
     const payload = await response.json();
+    markStreamActivity();
     renderPresence(payload.presence);
 
     if (payload.snapshot) {
@@ -405,26 +480,41 @@
   }
 
   function connectStream() {
+    if (state.destroyed) {
+      return;
+    }
+
+    closeEventSource();
+    clearReconnectTimer();
     const source = new EventSource(`/api/collab/stream/${encodeURIComponent(state.roomId)}?clientId=${encodeURIComponent(state.clientId)}`);
     state.eventSource = source;
 
     source.addEventListener("open", () => {
+      if (state.eventSource !== source) {
+        return;
+      }
       state.live = true;
+      state.reconnectAttempts = 0;
+      state.lastLiveAt = Date.now();
+      markStreamActivity();
       setStatus("Live", "live");
       sendPresence();
       fetchInitialSnapshot().catch((error) => {
         console.error("Initial snapshot fetch failed:", error);
-        setStatus("Initial sync failed", "offline");
+        scheduleReconnect("Initial sync failed");
       });
     });
 
     source.addEventListener("error", () => {
-      state.live = false;
-      setStatus("Offline", "offline");
+      if (state.eventSource !== source || state.destroyed) {
+        return;
+      }
+      scheduleReconnect("Reconnecting");
     });
 
     source.addEventListener("presence", (event) => {
       try {
+        markStreamActivity();
         renderPresence(JSON.parse(event.data));
       } catch (error) {
         console.error("Presence parse failed:", error);
@@ -433,6 +523,7 @@
 
     source.addEventListener("snapshot", (event) => {
       try {
+        markStreamActivity();
         const snapshot = JSON.parse(event.data);
         applySnapshot(snapshot);
       } catch (error) {

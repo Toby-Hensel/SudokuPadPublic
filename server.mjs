@@ -609,9 +609,12 @@ function handleSse(req, res, url) {
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-store",
-    connection: "keep-alive"
+    connection: "keep-alive",
+    "x-accel-buffering": "no"
   });
+  res.flushHeaders?.();
 
+  res.write("retry: 3000\n");
   res.write(": connected\n\n");
 
   const pingId = setInterval(() => {

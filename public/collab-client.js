@@ -28,8 +28,8 @@
     queuedSnapshot: null,
     latestRevision: 0,
     lastSentHash: "",
+    inFlightHash: "",
     broadcastTimer: null,
-    pendingApply: false,
     presenceTimer: null
   };
 
@@ -208,6 +208,53 @@
     return replay;
   }
 
+  function getReplayHash(replay) {
+    return JSON.stringify(replay);
+  }
+
+  function mergeReplays(currentReplay, incomingReplay) {
+    if (!currentReplay) {
+      return incomingReplay;
+    }
+
+    if (!incomingReplay) {
+      return currentReplay;
+    }
+
+    if (currentReplay.puzzleId !== incomingReplay.puzzleId) {
+      return incomingReplay;
+    }
+
+    const currentActions = Array.isArray(currentReplay.actions) ? currentReplay.actions : [];
+    const incomingActions = Array.isArray(incomingReplay.actions) ? incomingReplay.actions : [];
+    let prefixLength = 0;
+
+    while (
+      prefixLength < currentActions.length &&
+      prefixLength < incomingActions.length &&
+      currentActions[prefixLength] === incomingActions[prefixLength]
+    ) {
+      prefixLength += 1;
+    }
+
+    if (prefixLength === currentActions.length) {
+      return incomingReplay;
+    }
+
+    if (prefixLength === incomingActions.length) {
+      return currentReplay;
+    }
+
+    return {
+      puzzleId: currentReplay.puzzleId,
+      type: incomingReplay.type || currentReplay.type,
+      version: incomingReplay.version || currentReplay.version,
+      rows: incomingReplay.rows || currentReplay.rows,
+      cols: incomingReplay.cols || currentReplay.cols,
+      actions: currentActions.concat(incomingActions.slice(prefixLength))
+    };
+  }
+
   function scheduleBroadcast() {
     window.clearTimeout(state.broadcastTimer);
     state.broadcastTimer = window.setTimeout(pushLocalReplay, 180);
@@ -220,13 +267,13 @@
 
     try {
       const replay = getReplayPayload();
-      const hash = JSON.stringify(replay);
+      const hash = getReplayHash(replay);
 
-      if (hash === state.lastSentHash) {
+      if (hash === state.lastSentHash || hash === state.inFlightHash) {
         return;
       }
 
-      state.lastSentHash = hash;
+      state.inFlightHash = hash;
 
       const response = await fetch(`/api/collab/update/${encodeURIComponent(state.roomId)}`, {
         method: "POST",
@@ -244,9 +291,22 @@
       if (!response.ok) {
         throw new Error(`Sync failed with ${response.status}`);
       }
+
+      const payload = await response.json();
+      state.lastSentHash = hash;
+      state.latestRevision = Math.max(state.latestRevision, Number(payload.revision) || 0);
     } catch (error) {
       console.error("Local replay push failed:", error);
       setStatus("Reconnecting", "offline");
+    } finally {
+      const completedHash = state.inFlightHash;
+      state.inFlightHash = "";
+      if (completedHash) {
+        const currentHash = getReplayHash(getReplayPayload());
+        if (currentHash !== state.lastSentHash) {
+          scheduleBroadcast();
+        }
+      }
     }
   }
 
@@ -288,9 +348,11 @@
     const replayApi = getReplayApi();
     const puzzleApi = getPuzzleApi();
     const currentReplay = replayApi.create(framework.app.puzzle);
+    const mergedReplay = mergeReplays(currentReplay, snapshot.replay);
+    const currentHash = getReplayHash(currentReplay);
+    const mergedHash = getReplayHash(mergedReplay);
 
-    if (replayApi.compare(currentReplay, snapshot.replay)) {
-      state.lastSentHash = JSON.stringify(snapshot.replay);
+    if (mergedHash === currentHash) {
       setStatus("Live", "live");
       return;
     }
@@ -299,20 +361,22 @@
     setStatus(`Syncing from ${snapshot.name || "room"}`, "live");
 
     try {
-      await framework.app.loadReplay(snapshot.replay, { speed: -1 });
-      const replayLength = puzzleApi.replayLength(snapshot.replay);
+      await framework.app.loadReplay(mergedReplay, { speed: -1 });
+      const replayLength = puzzleApi.replayLength(mergedReplay);
 
       if (!Number.isNaN(replayLength)) {
         framework.app.timer.setStartTime(Date.now() - replayLength);
       }
 
-      state.lastSentHash = JSON.stringify(snapshot.replay);
       setStatus("Live", "live");
     } catch (error) {
       console.error("Remote replay apply failed:", error);
       setStatus("Sync error", "offline");
     } finally {
       state.applyingRemote = false;
+      if (mergedHash !== state.lastSentHash) {
+        scheduleBroadcast();
+      }
 
       if (state.queuedSnapshot && state.queuedSnapshot.revision > snapshot.revision) {
         const queued = state.queuedSnapshot;

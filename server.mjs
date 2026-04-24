@@ -397,6 +397,17 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SudokuPad Party</title>
+    <script>
+      (() => {
+        try {
+          const storedTheme = localStorage.getItem("landing-theme");
+          const preferredTheme = storedTheme || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+          document.documentElement.dataset.theme = preferredTheme;
+        } catch {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
     <style>
       :root {
         --bg: #081019;
@@ -415,6 +426,21 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         --radius-lg: 20px;
       }
 
+      :root[data-theme="light"] {
+        --bg: #f3f7fb;
+        --panel: rgba(255, 255, 255, 0.88);
+        --panel-strong: rgba(244, 249, 252, 0.96);
+        --panel-soft: rgba(7, 18, 28, 0.04);
+        --text: #10202f;
+        --muted: #5f7485;
+        --line: rgba(16, 32, 47, 0.12);
+        --accent: #0d8f67;
+        --accent-2: #c98600;
+        --accent-3: #2f6bd8;
+        --danger: #c85745;
+        --shadow: 0 30px 80px rgba(18, 36, 52, 0.12);
+      }
+
       * {
         box-sizing: border-box;
       }
@@ -429,6 +455,15 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           radial-gradient(circle at 84% 9%, rgba(125, 182, 255, 0.16), transparent 30%),
           radial-gradient(circle at 74% 72%, rgba(255, 215, 115, 0.13), transparent 24%),
           linear-gradient(150deg, #040a11 0%, #08131c 44%, #04090f 100%);
+        transition: background 180ms ease, color 180ms ease;
+      }
+
+      :root[data-theme="light"] body {
+        background:
+          radial-gradient(circle at 10% 14%, rgba(13, 143, 103, 0.10), transparent 24%),
+          radial-gradient(circle at 88% 10%, rgba(47, 107, 216, 0.10), transparent 28%),
+          radial-gradient(circle at 74% 76%, rgba(201, 134, 0, 0.08), transparent 24%),
+          linear-gradient(160deg, #f7fbff 0%, #edf4f8 46%, #f3f7fb 100%);
       }
 
       main {
@@ -676,6 +711,31 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         font-weight: 700;
       }
 
+      .topbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .theme-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 44px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--panel-soft);
+        color: var(--text);
+        box-shadow: none;
+      }
+
+      .theme-toggle__icon {
+        font-size: 1rem;
+        line-height: 1;
+      }
+
       .video-grid {
         display: grid;
         gap: 18px;
@@ -855,7 +915,13 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
             <div class="eyebrow">Shared SudokuPad Rooms</div>
             <div class="eyebrow eyebrow--gold">Landing Page Only Redesign</div>
           </div>
-          <a class="section-link" href="https://www.youtube.com/channel/UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer">Cracking the Cryptic on YouTube</a>
+          <div class="topbar-actions">
+            <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">
+              <span class="theme-toggle__icon" id="theme-toggle-icon">☀</span>
+              <span id="theme-toggle-label">Light mode</span>
+            </button>
+            <a class="section-link" href="https://www.youtube.com/channel/UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer">Cracking the Cryptic on YouTube</a>
+          </div>
         </div>
 
         <div class="hero">
@@ -960,6 +1026,9 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         const copyLinkButton = document.getElementById("copy-link");
         const openLinkButton = document.getElementById("open-link");
         const openPublicButton = document.getElementById("open-public");
+        const themeToggleButton = document.getElementById("theme-toggle");
+        const themeToggleIcon = document.getElementById("theme-toggle-icon");
+        const themeToggleLabel = document.getElementById("theme-toggle-label");
 
         function extractPuzzleId(value) {
           const raw = String(value || "").trim();
@@ -987,6 +1056,21 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
 
         function randomRoom() {
           return Math.random().toString(36).slice(2, 10);
+        }
+
+        function applyTheme(theme) {
+          const nextTheme = theme === "light" ? "light" : "dark";
+          document.documentElement.dataset.theme = nextTheme;
+          themeToggleIcon.textContent = nextTheme === "light" ? "☾" : "☀";
+          themeToggleLabel.textContent = nextTheme === "light" ? "Dark mode" : "Light mode";
+          themeToggleButton.setAttribute("aria-label", nextTheme === "light" ? "Switch to dark mode" : "Switch to light mode");
+        }
+
+        function toggleTheme() {
+          const currentTheme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+          const nextTheme = currentTheme === "light" ? "dark" : "light";
+          applyTheme(nextTheme);
+          localStorage.setItem("landing-theme", nextTheme);
         }
 
         function buildLinkFromSource(source, { usePuzzleRoom, roomValue } = {}) {
@@ -1054,6 +1138,9 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
             window.location.href = resultLink.href;
           }
         });
+
+        themeToggleButton.addEventListener("click", toggleTheme);
+        applyTheme(document.documentElement.dataset.theme);
 
         document.querySelectorAll("[data-ctc-puzzle-source]").forEach((button) => {
           button.addEventListener("click", () => {

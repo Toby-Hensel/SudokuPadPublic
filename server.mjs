@@ -533,6 +533,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         overflow: hidden;
         padding: 34px;
         border-radius: var(--radius-xl);
+        grid-column: 1 / -1;
       }
 
       .hero-copy::after {
@@ -603,6 +604,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         padding: 24px;
         display: grid;
         gap: 18px;
+        grid-column: 1 / -1;
       }
 
       .launch-card__title {

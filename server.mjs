@@ -12,6 +12,7 @@ const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "0.0.0.0";
 const upstreamOrigin = process.env.UPSTREAM_ORIGIN || "https://sudokupad.app";
 const assetVersion = process.env.RENDER_GIT_COMMIT || "dev";
+const publicAppOrigin = process.env.PUBLIC_APP_ORIGIN || "https://sudokupad-party.onrender.com";
 const rooms = new Map();
 
 const publicContentTypes = {
@@ -40,6 +41,58 @@ function escapeHtml(value) {
     '"': "&quot;",
     "'": "&#39;"
   })[char]);
+}
+
+function isLocalOrPrivateHostname(hostname) {
+  const value = String(hostname || "").toLowerCase();
+  if (!value) {
+    return false;
+  }
+
+  if (value === "localhost" || value === "127.0.0.1" || value === "::1" || value.endsWith(".local")) {
+    return true;
+  }
+
+  if (/^10\./.test(value) || /^192\.168\./.test(value)) {
+    return true;
+  }
+
+  const private172 = value.match(/^172\.(\d{1,3})\./);
+  if (private172) {
+    const secondOctet = Number(private172[1]);
+    if (secondOctet >= 16 && secondOctet <= 31) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function getPreferredAppOrigin(origin) {
+  try {
+    const current = new URL(origin);
+    const preferred = new URL(publicAppOrigin);
+    if (isLocalOrPrivateHostname(current.hostname) && current.origin !== preferred.origin) {
+      return preferred.origin;
+    }
+    return current.origin;
+  } catch {
+    return origin;
+  }
+}
+
+function shouldRedirectToPublic(url, origin) {
+  if (process.env.ALLOW_LOCAL_ROOMS === "1" || url.searchParams.get("local") === "1") {
+    return false;
+  }
+
+  try {
+    const current = new URL(origin);
+    const preferred = new URL(publicAppOrigin);
+    return isPuzzleRoute(url.pathname) && isLocalOrPrivateHostname(current.hostname) && current.origin !== preferred.origin;
+  } catch {
+    return false;
+  }
 }
 
 function isReservedPath(pathname) {
@@ -213,13 +266,14 @@ async function servePublicAsset(res, pathname) {
 
 function injectCollabAssets(html) {
   const headTag = `<link rel="stylesheet" href="/assets/collab-client.css?v=${assetVersion}">`;
+  const configTag = `<script>window.__COLLAB_PUBLIC_ORIGIN__=${JSON.stringify(publicAppOrigin)};</script>`;
   const scriptTag = `<script src="/assets/collab-client.js?v=${assetVersion}" defer></script>`;
   return html
-    .replace("</head>", `${headTag}\n</head>`)
+    .replace("</head>", `${headTag}\n${configTag}\n</head>`)
     .replace("</body>", `${scriptTag}\n</body>`);
 }
 
-function renderHomePage(origin) {
+function renderHomePage(origin, preferredOrigin) {
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -428,6 +482,7 @@ function renderHomePage(origin) {
             Paste any SudokuPad URL or short puzzle ID and this site will open the official puzzle board through a collaboration-enabled proxy.
             Everyone in the same room sees the board update live.
           </p>
+          ${origin !== preferredOrigin ? `<p class="lede"><strong>Public collaboration mode:</strong> this local app will generate links on <code>${escapeHtml(preferredOrigin)}</code> so people on different networks join the same shared room.</p>` : ""}
         </div>
 
         <div class="card">
@@ -472,13 +527,13 @@ function renderHomePage(origin) {
       </section>
 
       <div class="footer">
-        Default origin: <code>${escapeHtml(origin)}</code>
+        Collaboration origin: <code>${escapeHtml(preferredOrigin)}</code>
       </div>
     </main>
 
     <script>
       (() => {
-        const origin = ${JSON.stringify(origin)};
+        const origin = ${JSON.stringify(preferredOrigin)};
         const sourceInput = document.getElementById("source");
         const roomInput = document.getElementById("room");
         const output = document.getElementById("output");
@@ -750,13 +805,24 @@ const server = http.createServer(async (req, res) => {
     const origin = `http://${req.headers.host || `localhost:${port}`}`;
     const url = new URL(req.url || "/", origin);
     const { pathname } = url;
+    const preferredOrigin = getPreferredAppOrigin(origin);
+
+    if (req.method === "GET" && shouldRedirectToPublic(url, origin)) {
+      const redirectUrl = new URL(url.pathname + url.search, preferredOrigin);
+      res.writeHead(302, {
+        location: redirectUrl.toString(),
+        "cache-control": "no-store"
+      });
+      res.end();
+      return;
+    }
 
     if (req.method === "GET" && pathname === "/") {
       res.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store"
       });
-      res.end(renderHomePage(origin));
+      res.end(renderHomePage(origin, preferredOrigin));
       return;
     }
 

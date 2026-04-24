@@ -53,6 +53,14 @@ async function getReplayActions(page) {
   return page.evaluate(() => Replay.create(Framework.app.puzzle).actions || []);
 }
 
+async function clickDigitButton(page, digit) {
+  await page.locator(`button.digit[title="${digit}"]`).click({ force: true });
+}
+
+async function clickControlButton(page, name) {
+  await page.getByRole("button", { name }).click({ force: true });
+}
+
 async function waitForActionSync(page, validate) {
   await page.waitForFunction(
     (validatorSource) => {
@@ -146,7 +154,8 @@ async function main() {
       env: {
         ...process.env,
         PORT: String(port),
-        HOST: host
+        HOST: host,
+        ALLOW_LOCAL_ROOMS: "1"
       },
       stdio: ["ignore", "pipe", "pipe"]
     })
@@ -178,41 +187,41 @@ async function main() {
           actions: [
             {
               label: "digit",
-              run: (page, box) => Promise.all([
-                page.mouse.click(box.x + 40, box.y + 40),
-                Promise.resolve()
-              ]).then(() => page.keyboard.press("5")),
+              run: async (page, box) => {
+                await page.mouse.click(box.x + 40, box.y + 40);
+                await clickDigitButton(page, 5);
+              },
               validate: (actions) => actions.some((action) => action.startsWith("vl:5"))
             },
             {
               label: "undo",
-              run: (page) => page.getByRole("button", { name: "Undo" }).click(),
+              run: (page) => clickControlButton(page, "Undo"),
               validate: (actions) => actions.some((action) => action.startsWith("ud/"))
             },
             {
               label: "corner",
               run: async (page, box) => {
-                await page.getByRole("button", { name: "Corner" }).click();
+                await clickControlButton(page, "Corner");
                 await page.mouse.click(box.x + 40, box.y + 40);
-                await page.keyboard.press("3");
+                await clickDigitButton(page, 3);
               },
               validate: (actions) => actions.some((action) => action.startsWith("pm:3"))
             },
             {
               label: "centre",
               run: async (page, box) => {
-                await page.getByRole("button", { name: "Centre" }).click();
+                await clickControlButton(page, "Centre");
                 await page.mouse.click(box.x + 100, box.y + 40);
-                await page.keyboard.press("4");
+                await clickDigitButton(page, 4);
               },
               validate: (actions) => actions.some((action) => action.startsWith("cd:4"))
             },
             {
               label: "color",
               run: async (page, box) => {
-                await page.getByRole("button", { name: "Color" }).click();
+                await clickControlButton(page, "Color");
                 await page.mouse.click(box.x + 160, box.y + 40);
-                await page.keyboard.press("2");
+                await clickDigitButton(page, 2);
               },
               validate: (actions) => actions.some((action) => action.startsWith("co:2"))
             }
@@ -226,16 +235,16 @@ async function main() {
               label: "digit",
               run: async (page, box) => {
                 await page.mouse.click(box.x + 40, box.y + 40);
-                await page.keyboard.press("7");
+                await clickDigitButton(page, 7);
               },
               validate: (actions) => actions.some((action) => action.startsWith("vl:7"))
             },
             {
               label: "corner",
               run: async (page, box) => {
-                await page.getByRole("button", { name: "Corner" }).click();
+                await clickControlButton(page, "Corner");
                 await page.mouse.click(box.x + 100, box.y + 40);
-                await page.keyboard.press("8");
+                await clickDigitButton(page, 8);
               },
               validate: (actions) => actions.some((action) => action.startsWith("pm:8"))
             }

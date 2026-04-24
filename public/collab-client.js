@@ -1,6 +1,13 @@
 (() => {
   const pathMatch = window.location.pathname.match(/^\/(?:sudoku\/)?([^/?#]+)/i);
   const puzzleId = pathMatch ? decodeURIComponent(pathMatch[1]) : "";
+  const publicOrigin = (() => {
+    try {
+      return new URL(window.__COLLAB_PUBLIC_ORIGIN__ || window.location.origin).origin;
+    } catch {
+      return window.location.origin;
+    }
+  })();
 
   if (!puzzleId) {
     return;
@@ -19,7 +26,7 @@
   const immediateBroadcastDelayMs = 45;
   const fallbackBroadcastDelayMs = 120;
   const syncMonitorIntervalMs = 250;
-  const snapshotPollIntervalMs = 1000;
+  const snapshotPollIntervalMs = 500;
 
   const state = {
     roomId,
@@ -55,7 +62,7 @@
   sessionStorage.setItem(clientIdKey, state.clientId);
 
   const ui = createUi();
-  const inviteLink = `${window.location.origin}/${encodeURIComponent(puzzleId)}?room=${encodeURIComponent(roomId)}`;
+  const inviteLink = `${publicOrigin}/${encodeURIComponent(puzzleId)}?room=${encodeURIComponent(roomId)}`;
 
   setStatus("Connecting", "offline");
   setMeta(inviteLink);

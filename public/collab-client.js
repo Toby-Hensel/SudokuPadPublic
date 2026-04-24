@@ -26,6 +26,7 @@
   const clientIdKey = `collab-client-id:${roomId}`;
   const nameKey = "collab-display-name";
   const dockPositionKey = `collab-dock-position:${puzzleId}`;
+  const mediaPanelPositionKey = `collab-media-panel-position:${puzzleId}`;
   const immediateBroadcastDelayMs = 45;
   const fallbackBroadcastDelayMs = 120;
   const syncMonitorIntervalMs = 250;
@@ -67,6 +68,9 @@
     dragPointerId: null,
     dragOffsetX: 0,
     dragOffsetY: 0,
+    mediaDragPointerId: null,
+    mediaDragOffsetX: 0,
+    mediaDragOffsetY: 0,
     destroyed: false
   };
 
@@ -79,6 +83,7 @@
   setMeta(inviteLink);
   ui.nameInput.value = state.name;
   restoreDockPosition();
+  restoreMediaPanelPosition();
   updateMediaControls();
 
   ui.copyButton.addEventListener("click", async () => {
@@ -100,6 +105,7 @@
     ui.toggleButton.title = minimized ? "Expand" : "Minimize";
   });
   ui.head.addEventListener("pointerdown", beginDockDrag);
+  ui.mediaPanelHead.addEventListener("pointerdown", beginMediaPanelDrag);
 
   ui.nameInput.addEventListener("change", () => {
     state.name = ui.nameInput.value.trim() || state.name;
@@ -152,6 +158,7 @@
     }
     leaveMediaSession({ silent: true });
     endDockDrag();
+    endMediaPanelDrag();
   });
 
   function createUi() {
@@ -199,13 +206,17 @@
     const mediaPanel = document.createElement("section");
     mediaPanel.className = "collab-media-panel";
     mediaPanel.innerHTML = `
-      <div class="collab-media-panel__title">Camera Feeds</div>
-      <div class="collab-media-panel__grid">
+      <div class="collab-media-panel__head">
+        <div class="collab-media-panel__title">Camera Feeds</div>
+      </div>
+      <div class="collab-media-panel__body">
+        <div class="collab-media-panel__grid">
         <div class="collab-media-panel__card collab-media-panel__card--local collab-media-panel__card--hidden">
           <video class="collab-media-panel__video collab-media-panel__video--local" autoplay muted playsinline></video>
           <div class="collab-media-panel__label">You</div>
         </div>
         <div class="collab-media-panel__remote-grid"></div>
+        </div>
       </div>
     `;
     document.body.appendChild(mediaPanel);
@@ -229,6 +240,7 @@
       cameraButton: mediaActions.querySelectorAll(".collab-dock__button--secondary")[1],
       leaveMediaButton: mediaActions.querySelectorAll(".collab-dock__button--secondary")[2],
       mediaPanel,
+      mediaPanelHead: mediaPanel.querySelector(".collab-media-panel__head"),
       localVideoCard: mediaPanel.querySelector(".collab-media-panel__card--local"),
       localVideo: mediaPanel.querySelector(".collab-media-panel__video--local"),
       remoteMedia: mediaPanel.querySelector(".collab-media-panel__remote-grid")
@@ -289,6 +301,34 @@
     }
   }
 
+  function persistMediaPanelPosition() {
+    localStorage.setItem(mediaPanelPositionKey, JSON.stringify({
+      left: ui.mediaPanel.style.left,
+      top: ui.mediaPanel.style.top
+    }));
+  }
+
+  function restoreMediaPanelPosition() {
+    const raw = localStorage.getItem(mediaPanelPositionKey);
+    if (!raw) {
+      return;
+    }
+
+    try {
+      const saved = JSON.parse(raw);
+      const left = Number.parseFloat(saved.left);
+      const top = Number.parseFloat(saved.top);
+      if (Number.isFinite(left) && Number.isFinite(top)) {
+        ui.mediaPanel.style.left = `${left}px`;
+        ui.mediaPanel.style.top = `${top}px`;
+        ui.mediaPanel.style.right = "auto";
+        ui.mediaPanel.style.bottom = "auto";
+      }
+    } catch {
+      localStorage.removeItem(mediaPanelPositionKey);
+    }
+  }
+
   function moveDockWithPointer(clientX, clientY) {
     applyDockPosition(clientX - state.dragOffsetX, clientY - state.dragOffsetY);
   }
@@ -337,6 +377,75 @@
     window.addEventListener("pointermove", onDockDragMove);
     window.addEventListener("pointerup", endDockDrag);
     window.addEventListener("pointercancel", endDockDrag);
+  }
+
+  function clampMediaPanelPosition(left, top) {
+    const rect = ui.mediaPanel.getBoundingClientRect();
+    const maxLeft = Math.max(0, window.innerWidth - rect.width);
+    const maxTop = Math.max(0, window.innerHeight - rect.height);
+
+    return {
+      left: Math.min(Math.max(0, left), maxLeft),
+      top: Math.min(Math.max(0, top), maxTop)
+    };
+  }
+
+  function applyMediaPanelPosition(left, top) {
+    const next = clampMediaPanelPosition(left, top);
+    ui.mediaPanel.style.left = `${next.left}px`;
+    ui.mediaPanel.style.top = `${next.top}px`;
+    ui.mediaPanel.style.right = "auto";
+    ui.mediaPanel.style.bottom = "auto";
+  }
+
+  function moveMediaPanelWithPointer(clientX, clientY) {
+    applyMediaPanelPosition(clientX - state.mediaDragOffsetX, clientY - state.mediaDragOffsetY);
+  }
+
+  function onMediaPanelDragMove(event) {
+    if (event.pointerId !== state.mediaDragPointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    moveMediaPanelWithPointer(event.clientX, event.clientY);
+  }
+
+  function endMediaPanelDrag(event) {
+    if (event && event.pointerId !== state.mediaDragPointerId) {
+      return;
+    }
+
+    if (state.mediaDragPointerId === null) {
+      return;
+    }
+
+    state.mediaDragPointerId = null;
+    ui.mediaPanel.classList.remove("collab-media-panel--dragging");
+    window.removeEventListener("pointermove", onMediaPanelDragMove);
+    window.removeEventListener("pointerup", endMediaPanelDrag);
+    window.removeEventListener("pointercancel", endMediaPanelDrag);
+    persistMediaPanelPosition();
+  }
+
+  function beginMediaPanelDrag(event) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    if (event.target instanceof Element && event.target.closest("button, input, textarea, select, a, label, video")) {
+      return;
+    }
+
+    const rect = ui.mediaPanel.getBoundingClientRect();
+    state.mediaDragPointerId = event.pointerId;
+    state.mediaDragOffsetX = event.clientX - rect.left;
+    state.mediaDragOffsetY = event.clientY - rect.top;
+    ui.mediaPanel.classList.add("collab-media-panel--dragging");
+
+    window.addEventListener("pointermove", onMediaPanelDragMove);
+    window.addEventListener("pointerup", endMediaPanelDrag);
+    window.addEventListener("pointercancel", endMediaPanelDrag);
   }
 
   function refreshConnectionStatus() {

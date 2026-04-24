@@ -8,6 +8,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "test:two-tab-sync": "node scripts/test-two-tab-sync.mjs"
+    "test:two-tab-sync": "node scripts/test-two-tab-sync.mjs",
+    "keep-warm": "node scripts/keep-warm.mjs"
   }
 }

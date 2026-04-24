@@ -6,3 +6,13 @@ services:
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeployTrigger: commit
+  - type: cron
+    name: sudokupad-party-keep-warm
+    runtime: node
+    buildCommand: echo "No build step needed"
+    startCommand: npm run keep-warm
+    schedule: "*/10 * * * *"
+    autoDeployTrigger: commit
+    envVars:
+      - key: WARM_TARGET_URL
+        value: https://sudokupad-party.onrender.com/api/health

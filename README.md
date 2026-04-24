@@ -40,6 +40,23 @@ That means:
 - Render notices the new commit
 - Render rebuilds and updates the public server automatically
 
+### Cold-start fix
+
+Render free web services can still spin down after 15 minutes of no traffic.
+
+This repo now includes a Render cron service in [render.yaml](/C:/Users/rubie/Documents/Codex/2026-04-22-i-would-like-you-to-create/render.yaml) that pings:
+
+- `https://sudokupad-party.onrender.com/api/health`
+
+every 10 minutes to keep the public site warm.
+
+Important:
+
+- the keep-warm cron job is a separate Render service
+- Render cron jobs have a minimum charge of $1/month
+- if you rename the service or use a custom domain, update `WARM_TARGET_URL`
+- the stronger long-term fix is upgrading the web service itself from `Free` to `Starter`, which avoids free-tier sleep entirely
+
 ### Files added for public hosting
 
 - `render.yaml`
@@ -88,3 +105,13 @@ That means:
 - one deployed server works fine
 - if the server restarts, room state resets
 - the next upgrade for a more durable production setup would be Redis or another shared store
+
+## Manual keep-warm test
+
+You can run the keep-warm ping locally with:
+
+```powershell
+$env:WARM_TARGET_URL='https://sudokupad-party.onrender.com/api/health'
+.\runtime\node\node.exe scripts\keep-warm.mjs
+Remove-Item Env:WARM_TARGET_URL
+```

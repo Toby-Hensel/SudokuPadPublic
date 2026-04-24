@@ -39,6 +39,14 @@ function makeRoomId() {
   return randomBytes(6).toString("base64url").toLowerCase();
 }
 
+function normalizePuzzleId(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .split(/[?#]/)[0]
+    .slice(0, 160);
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -237,6 +245,7 @@ function getRoom(roomId) {
   if (!rooms.has(roomId)) {
     rooms.set(roomId, {
       roomId,
+      puzzleId: null,
       latest: null,
       clients: new Map(),
       updatedAt: Date.now()
@@ -244,6 +253,10 @@ function getRoom(roomId) {
   }
 
   return rooms.get(roomId);
+}
+
+function peekRoom(roomId) {
+  return rooms.get(roomId) || null;
 }
 
 function activePeers(room) {
@@ -350,10 +363,11 @@ async function readJsonBody(req, sizeLimit = 1_000_000) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-function sendJson(res, statusCode, payload) {
+function sendJson(res, statusCode, payload, extraHeaders = {}) {
   res.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
+    "cache-control": "no-store",
+    ...extraHeaders
   });
   res.end(JSON.stringify(payload));
 }
@@ -610,6 +624,18 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
       .launch-card__title {
         font-size: 1.2rem;
         font-weight: 700;
+      }
+
+      .launch-card__grid {
+        display: grid;
+        gap: 22px;
+        grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
+      }
+
+      .launch-panel {
+        display: grid;
+        gap: 16px;
+        align-content: start;
       }
 
       .launch-card__note {
@@ -924,7 +950,8 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         .hero-grid,
         .facts,
         .hero-feed,
-        .video-grid {
+        .video-grid,
+        .launch-card__grid {
           grid-template-columns: 1fr;
         }
       }
@@ -1007,6 +1034,22 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
                 <button class="primary" type="button" id="open-link">Open room</button>
               </div>
             </div>
+            <div class="launch-panel">
+              <div>
+                <div class="launch-card__title">Join Existing Room</div>
+                <p class="launch-card__note">Type the room name someone else created and jump straight into that shared puzzle.</p>
+              </div>
+              <form id="join-form">
+                <label>
+                  Room name
+                  <input id="join-room" name="join-room" placeholder="for example: streamparty" autocomplete="off">
+                </label>
+                <div class="actions">
+                  <button class="secondary" type="submit" id="join-room-button">Join room</button>
+                </div>
+              </form>
+              <div class="mini">Use the room name from the end of a shared collaboration link, after <code>?room=</code>.</div>
+            </div>
           </div>
         </div>
       </section>
@@ -1041,6 +1084,8 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         const copyLinkButton = document.getElementById("copy-link");
         const openLinkButton = document.getElementById("open-link");
         const openPublicButton = document.getElementById("open-public");
+        const joinRoomInput = document.getElementById("join-room");
+        const joinRoomButton = document.getElementById("join-room-button");
         const themeToggleButton = document.getElementById("theme-toggle");
         const themeToggleIcon = document.getElementById("theme-toggle-icon");
         const themeToggleLabel = document.getElementById("theme-toggle-label");
@@ -1122,6 +1167,27 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           output.classList.add("visible");
         }
 
+        async function joinExistingRoom() {
+          const room = slugifyRoom(joinRoomInput.value);
+          if (!room) {
+            joinRoomInput.focus();
+            throw new Error("Please enter a room name.");
+          }
+
+          const response = await fetch(origin + "/api/collab/lookup/" + encodeURIComponent(room));
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(payload.error || "Could not find that room.");
+          }
+
+          if (!payload.inviteLink) {
+            throw new Error("That room is not ready yet.");
+          }
+
+          window.location.href = payload.inviteLink;
+        }
+
         document.getElementById("launch-form").addEventListener("submit", (event) => {
           event.preventDefault();
           try {
@@ -1151,6 +1217,21 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         openLinkButton.addEventListener("click", () => {
           if (resultLink.href) {
             window.location.href = resultLink.href;
+          }
+        });
+
+        document.getElementById("join-form").addEventListener("submit", async (event) => {
+          event.preventDefault();
+          joinRoomButton.disabled = true;
+          const originalLabel = joinRoomButton.textContent;
+          joinRoomButton.textContent = "Joining...";
+          try {
+            await joinExistingRoom();
+          } catch (error) {
+            alert(error.message);
+          } finally {
+            joinRoomButton.disabled = false;
+            joinRoomButton.textContent = originalLabel;
           }
         });
 
@@ -1266,12 +1347,70 @@ async function handlePresence(req, res, url) {
   sendJson(res, 200, payload);
 }
 
+async function handleRoomRegistration(req, res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "default");
+  const room = getRoom(roomId);
+  const body = await readJsonBody(req);
+  const puzzleId = normalizePuzzleId(body.puzzleId);
+
+  if (!puzzleId) {
+    sendJson(res, 400, { error: "Missing puzzleId." });
+    return;
+  }
+
+  room.puzzleId = puzzleId;
+  room.updatedAt = Date.now();
+
+  sendJson(res, 200, {
+    roomId,
+    puzzleId
+  });
+}
+
+async function handleRoomLookup(res, url, origin) {
+  const roomId = String(url.pathname.split("/").pop() || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 64);
+  const room = roomId ? peekRoom(roomId) : null;
+  const puzzleId = room?.puzzleId || room?.latest?.puzzleId || room?.latest?.replay?.puzzleId || "";
+  const corsHeaders = {
+    "access-control-allow-origin": "*"
+  };
+
+  if (!roomId) {
+    sendJson(res, 400, { error: "Missing room name." }, corsHeaders);
+    return;
+  }
+
+  if (!room) {
+    sendJson(res, 404, { error: "Room not found." }, corsHeaders);
+    return;
+  }
+
+  if (!puzzleId) {
+    sendJson(res, 409, { error: "Room exists but is not ready yet." }, corsHeaders);
+    return;
+  }
+
+  const inviteLink = new URL(`/${encodeURIComponent(puzzleId)}`, origin);
+  inviteLink.searchParams.set("room", roomId);
+
+  sendJson(res, 200, {
+    roomId,
+    puzzleId,
+    inviteLink: inviteLink.toString()
+  }, corsHeaders);
+}
+
 async function handleSync(res, url) {
   const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "default");
   const room = getRoom(roomId);
 
   sendJson(res, 200, {
     roomId,
+    puzzleId: room.puzzleId || room.latest?.puzzleId || room.latest?.replay?.puzzleId || null,
     snapshot: room.latest,
     presence: presencePayload(room)
   });
@@ -1315,6 +1454,7 @@ async function handleUpdate(req, res, url) {
     hash: nextHash,
     incomingHash
   };
+  room.puzzleId = normalizePuzzleId(nextReplay.puzzleId) || room.puzzleId;
   room.updatedAt = Date.now();
 
   broadcast(room, "snapshot", room.latest);
@@ -1395,8 +1535,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && pathname.startsWith("/api/collab/lookup/")) {
+      await handleRoomLookup(res, url, preferredOrigin);
+      return;
+    }
+
     if (req.method === "POST" && pathname.startsWith("/api/collab/presence/")) {
       await handlePresence(req, res, url);
+      return;
+    }
+
+    if (req.method === "POST" && pathname.startsWith("/api/collab/register/")) {
+      await handleRoomRegistration(req, res, url);
       return;
     }
 

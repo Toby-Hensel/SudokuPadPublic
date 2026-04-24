@@ -103,6 +103,9 @@
       state.lastSentHash = state.lastAppliedHash;
       patchActionBroadcasting();
       patchProgressSaving();
+      registerRoom().catch((error) => {
+        console.error("Room registration failed:", error);
+      });
       startRealtime();
       state.presenceTimer = window.setInterval(sendPresence, 20_000);
     })
@@ -510,6 +513,22 @@
     ensureSnapshotPolling();
     connectStream();
     sendPresence();
+  }
+
+  async function registerRoom() {
+    const response = await fetch(`/api/collab/register/${encodeURIComponent(state.roomId)}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        puzzleId: state.puzzleId
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Room registration failed with ${response.status}`);
+    }
   }
 
   async function pushLocalReplay() {

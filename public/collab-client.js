@@ -8,6 +8,9 @@
       return window.location.origin;
     }
   })();
+  const iceServers = Array.isArray(window.__COLLAB_ICE_SERVERS__) && window.__COLLAB_ICE_SERVERS__.length > 0
+    ? window.__COLLAB_ICE_SERVERS__
+    : [{ urls: ["stun:stun.l.google.com:19302"] }];
 
   if (!puzzleId) {
     return;
@@ -53,6 +56,13 @@
     lastAppliedHash: "",
     syncRequestInFlight: false,
     pollHealthy: false,
+    peers: [],
+    localStream: null,
+    mediaEnabled: false,
+    mediaBusy: false,
+    micEnabled: true,
+    cameraEnabled: true,
+    peerConnections: new Map(),
     dragPointerId: null,
     dragOffsetX: 0,
     dragOffsetY: 0,
@@ -68,6 +78,7 @@
   setMeta(inviteLink);
   ui.nameInput.value = state.name;
   restoreDockPosition();
+  updateMediaControls();
 
   ui.copyButton.addEventListener("click", async () => {
     await navigator.clipboard.writeText(inviteLink);
@@ -95,6 +106,10 @@
     ui.nameInput.value = state.name;
     sendPresence();
   });
+  ui.joinMediaButton.addEventListener("click", joinMediaSession);
+  ui.micButton.addEventListener("click", toggleMicrophone);
+  ui.cameraButton.addEventListener("click", toggleCamera);
+  ui.leaveMediaButton.addEventListener("click", leaveMediaSession);
 
   waitForSudokuPad()
     .then(() => {
@@ -134,6 +149,7 @@
     if (state.eventSource) {
       state.eventSource.close();
     }
+    leaveMediaSession({ silent: true });
     endDockDrag();
   });
 
@@ -165,9 +181,24 @@
           Solvers in room
           <div class="collab-dock__peers"></div>
         </div>
+        <div class="collab-dock__label">
+          Camera and audio
+          <div class="collab-dock__media-status">Off</div>
+          <div class="collab-dock__actions collab-dock__actions--media">
+            <button class="collab-dock__button collab-dock__button--primary" type="button">Join AV</button>
+            <button class="collab-dock__button collab-dock__button--secondary" type="button" disabled>Mic on</button>
+            <button class="collab-dock__button collab-dock__button--secondary" type="button" disabled>Cam on</button>
+            <button class="collab-dock__button collab-dock__button--secondary" type="button" disabled>Leave</button>
+          </div>
+          <video class="collab-dock__local-video" autoplay muted playsinline></video>
+          <div class="collab-dock__remote-media"></div>
+        </div>
       </div>
     `;
     document.body.appendChild(dock);
+
+    const inviteActions = dock.querySelectorAll(".collab-dock__actions")[0];
+    const mediaActions = dock.querySelector(".collab-dock__actions--media");
 
     return {
       dock,
@@ -176,9 +207,16 @@
       toggleButton: dock.querySelector(".collab-dock__toggle"),
       nameInput: dock.querySelector(".collab-dock__input"),
       meta: dock.querySelector(".collab-dock__meta"),
-      copyButton: dock.querySelector(".collab-dock__button--primary"),
-      shareButton: dock.querySelector(".collab-dock__button--secondary"),
-      peers: dock.querySelector(".collab-dock__peers")
+      copyButton: inviteActions.querySelector(".collab-dock__button--primary"),
+      shareButton: inviteActions.querySelector(".collab-dock__button--secondary"),
+      peers: dock.querySelector(".collab-dock__peers"),
+      mediaStatus: dock.querySelector(".collab-dock__media-status"),
+      joinMediaButton: mediaActions.querySelector(".collab-dock__button--primary"),
+      micButton: mediaActions.querySelectorAll(".collab-dock__button--secondary")[0],
+      cameraButton: mediaActions.querySelectorAll(".collab-dock__button--secondary")[1],
+      leaveMediaButton: mediaActions.querySelectorAll(".collab-dock__button--secondary")[2],
+      localVideo: dock.querySelector(".collab-dock__local-video"),
+      remoteMedia: dock.querySelector(".collab-dock__remote-media")
     };
   }
 
@@ -303,6 +341,7 @@
 
   function renderPresence(payload) {
     const peers = Array.isArray(payload?.peers) ? payload.peers : [];
+    state.peers = peers;
     ui.peers.innerHTML = "";
 
     if (peers.length === 0) {
@@ -319,6 +358,387 @@
       pill.textContent = peer.clientId === state.clientId ? `${peer.name} (you)` : peer.name;
       ui.peers.appendChild(pill);
     });
+
+    for (const peerId of [...state.peerConnections.keys()]) {
+      if (!peers.some((peer) => peer.clientId === peerId)) {
+        closePeerConnection(peerId);
+      }
+    }
+
+    if (state.localStream) {
+      peers.forEach((peer) => {
+        if (peer.clientId !== state.clientId && shouldOfferTo(peer.clientId) && !state.peerConnections.has(peer.clientId)) {
+          negotiateWithPeer(peer.clientId);
+        }
+      });
+    }
+
+    renderRemoteMedia();
+    updateMediaControls();
+  }
+
+  function setMediaStatus(text) {
+    ui.mediaStatus.textContent = text;
+  }
+
+  function supportsRealtimeMedia() {
+    return Boolean(
+      navigator.mediaDevices?.getUserMedia &&
+      window.RTCPeerConnection
+    );
+  }
+
+  function getPeerLabel(peerId) {
+    const peer = state.peers.find((candidate) => candidate.clientId === peerId);
+    return peer?.clientId === state.clientId ? `${peer.name} (you)` : (peer?.name || `Solver ${peerId.slice(0, 4)}`);
+  }
+
+  function renderRemoteMedia() {
+    ui.remoteMedia.innerHTML = "";
+
+    if (state.localStream) {
+      ui.localVideo.srcObject = state.localStream;
+      ui.localVideo.classList.add("collab-dock__local-video--live");
+    } else {
+      ui.localVideo.srcObject = null;
+      ui.localVideo.classList.remove("collab-dock__local-video--live");
+    }
+
+    for (const [peerId, entry] of state.peerConnections.entries()) {
+      if (!entry.remoteStream || entry.remoteStream.getTracks().length === 0) {
+        continue;
+      }
+
+      const card = document.createElement("div");
+      card.className = "collab-dock__remote-card";
+
+      const video = document.createElement("video");
+      video.className = "collab-dock__remote-video";
+      video.autoplay = true;
+      video.playsInline = true;
+      video.srcObject = entry.remoteStream;
+      card.appendChild(video);
+
+      const label = document.createElement("div");
+      label.className = "collab-dock__remote-label";
+      label.textContent = getPeerLabel(peerId);
+      card.appendChild(label);
+
+      ui.remoteMedia.appendChild(card);
+    }
+  }
+
+  function updateMediaControls() {
+    const hasLocalMedia = Boolean(state.localStream);
+    const hasAudioTrack = Boolean(state.localStream?.getAudioTracks().length);
+    const hasVideoTrack = Boolean(state.localStream?.getVideoTracks().length);
+
+    ui.joinMediaButton.disabled = state.mediaBusy || hasLocalMedia;
+    ui.micButton.disabled = state.mediaBusy || !hasLocalMedia || !hasAudioTrack;
+    ui.cameraButton.disabled = state.mediaBusy || !hasLocalMedia || !hasVideoTrack;
+    ui.leaveMediaButton.disabled = state.mediaBusy || !hasLocalMedia;
+
+    ui.joinMediaButton.textContent = state.mediaBusy && !hasLocalMedia ? "Joining..." : "Join AV";
+    ui.micButton.textContent = hasAudioTrack ? (state.micEnabled ? "Mic on" : "Mic off") : "No mic";
+    ui.cameraButton.textContent = hasVideoTrack ? (state.cameraEnabled ? "Cam on" : "Cam off") : "No cam";
+    ui.leaveMediaButton.textContent = "Leave";
+
+    if (state.mediaBusy && !hasLocalMedia) {
+      setMediaStatus("Requesting access...");
+      return;
+    }
+
+    if (!hasLocalMedia) {
+      setMediaStatus("Off");
+      return;
+    }
+
+    const remoteCount = [...state.peerConnections.values()].filter((entry) => entry.remoteStream?.getTracks().length).length;
+    setMediaStatus(remoteCount > 0 ? `Live with ${remoteCount + 1}` : "Live");
+  }
+
+  function closePeerConnection(peerId) {
+    const entry = state.peerConnections.get(peerId);
+    if (!entry) {
+      return;
+    }
+
+    entry.pc.ontrack = null;
+    entry.pc.onicecandidate = null;
+    entry.pc.onconnectionstatechange = null;
+    entry.pc.close();
+    state.peerConnections.delete(peerId);
+    renderRemoteMedia();
+    updateMediaControls();
+  }
+
+  function closeAllPeerConnections() {
+    for (const peerId of [...state.peerConnections.keys()]) {
+      closePeerConnection(peerId);
+    }
+  }
+
+  function syncPeerConnectionTracks(entry) {
+    const localTracks = state.localStream?.getTracks() || [];
+    const senders = entry.pc.getSenders();
+
+    if (localTracks.length === 0) {
+      if (!entry.recvOnlyReady) {
+        entry.pc.addTransceiver("audio", { direction: "recvonly" });
+        entry.pc.addTransceiver("video", { direction: "recvonly" });
+        entry.recvOnlyReady = true;
+      }
+      return;
+    }
+
+    localTracks.forEach((track) => {
+      const existingSender = senders.find((sender) => sender.track && sender.track.kind === track.kind);
+      if (existingSender) {
+        if (existingSender.track !== track) {
+          existingSender.replaceTrack(track).catch(() => {});
+        }
+        return;
+      }
+
+      entry.pc.addTrack(track, state.localStream);
+    });
+  }
+
+  function shouldOfferTo(peerId) {
+    return state.clientId > peerId;
+  }
+
+  function ensurePeerConnection(peerId) {
+    if (!peerId || peerId === state.clientId) {
+      return null;
+    }
+
+    let entry = state.peerConnections.get(peerId);
+    if (entry) {
+      syncPeerConnectionTracks(entry);
+      return entry;
+    }
+
+    const pc = new RTCPeerConnection({ iceServers });
+    entry = {
+      pc,
+      remoteStream: new MediaStream(),
+      pendingCandidates: [],
+      recvOnlyReady: false
+    };
+    state.peerConnections.set(peerId, entry);
+    syncPeerConnectionTracks(entry);
+
+    pc.onicecandidate = (event) => {
+      if (!event.candidate) {
+        return;
+      }
+
+      sendCallSignal(peerId, "candidate", event.candidate.toJSON()).catch((error) => {
+        console.error("Candidate relay failed:", error);
+      });
+    };
+
+    pc.ontrack = (event) => {
+      event.streams[0]?.getTracks().forEach((track) => {
+        if (!entry.remoteStream.getTracks().some((candidate) => candidate.id === track.id)) {
+          entry.remoteStream.addTrack(track);
+        }
+      });
+      renderRemoteMedia();
+      updateMediaControls();
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (["failed", "closed"].includes(pc.connectionState)) {
+        closePeerConnection(peerId);
+      }
+    };
+
+    return entry;
+  }
+
+  async function sendCallSignal(targetClientId, signalType, payload) {
+    const response = await fetch(`/api/collab/call/${encodeURIComponent(state.roomId)}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        clientId: state.clientId,
+        targetClientId,
+        signalType,
+        payload
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Call signaling failed with ${response.status}`);
+    }
+  }
+
+  async function flushPendingCandidates(entry) {
+    while (entry.pendingCandidates.length > 0) {
+      const candidate = entry.pendingCandidates.shift();
+      await entry.pc.addIceCandidate(candidate);
+    }
+  }
+
+  async function negotiateWithPeer(peerId) {
+    const entry = ensurePeerConnection(peerId);
+    if (!entry || !shouldOfferTo(peerId)) {
+      return;
+    }
+
+    try {
+      const offer = await entry.pc.createOffer();
+      await entry.pc.setLocalDescription(offer);
+      await sendCallSignal(peerId, "offer", entry.pc.localDescription.toJSON());
+    } catch (error) {
+      console.error("Offer creation failed:", error);
+    }
+  }
+
+  async function handleCallSignal(message) {
+    const peerId = String(message?.fromClientId || "");
+    if (!peerId || peerId === state.clientId) {
+      return;
+    }
+
+    if (message.signalType === "hangup") {
+      closePeerConnection(peerId);
+      return;
+    }
+
+    if (message.signalType === "announce-media") {
+      if (shouldOfferTo(peerId)) {
+        await negotiateWithPeer(peerId);
+      }
+      return;
+    }
+
+    const entry = ensurePeerConnection(peerId);
+    if (!entry) {
+      return;
+    }
+
+    if (message.signalType === "offer") {
+      await entry.pc.setRemoteDescription(new RTCSessionDescription(message.payload));
+      syncPeerConnectionTracks(entry);
+      const answer = await entry.pc.createAnswer();
+      await entry.pc.setLocalDescription(answer);
+      await flushPendingCandidates(entry);
+      await sendCallSignal(peerId, "answer", entry.pc.localDescription.toJSON());
+      return;
+    }
+
+    if (message.signalType === "answer") {
+      await entry.pc.setRemoteDescription(new RTCSessionDescription(message.payload));
+      await flushPendingCandidates(entry);
+      return;
+    }
+
+    if (message.signalType === "candidate") {
+      const candidate = new RTCIceCandidate(message.payload);
+      if (entry.pc.remoteDescription) {
+        await entry.pc.addIceCandidate(candidate);
+      } else {
+        entry.pendingCandidates.push(candidate);
+      }
+    }
+  }
+
+  async function joinMediaSession() {
+    if (state.mediaBusy || state.localStream) {
+      return;
+    }
+
+    if (!supportsRealtimeMedia()) {
+      alert("This browser does not support live camera/audio calls here.");
+      return;
+    }
+
+    state.mediaBusy = true;
+    updateMediaControls();
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true
+      });
+      state.localStream = stream;
+      state.micEnabled = true;
+      state.cameraEnabled = true;
+      renderRemoteMedia();
+      updateMediaControls();
+
+      await sendCallSignal("", "announce-media", {
+        hasAudio: stream.getAudioTracks().length > 0,
+        hasVideo: stream.getVideoTracks().length > 0
+      });
+
+      for (const peer of state.peers) {
+        if (peer.clientId !== state.clientId && shouldOfferTo(peer.clientId)) {
+          await negotiateWithPeer(peer.clientId);
+        }
+      }
+    } catch (error) {
+      console.error("Joining media failed:", error);
+      alert("Camera/audio access failed. Please allow microphone and camera access to join the call.");
+    } finally {
+      state.mediaBusy = false;
+      updateMediaControls();
+    }
+  }
+
+  function stopLocalTracks() {
+    state.localStream?.getTracks().forEach((track) => {
+      track.stop();
+    });
+    state.localStream = null;
+    state.micEnabled = false;
+    state.cameraEnabled = false;
+  }
+
+  function leaveMediaSession(options = {}) {
+    const silent = options.silent === true;
+    if (!state.localStream && state.peerConnections.size === 0) {
+      updateMediaControls();
+      return;
+    }
+
+    if (!silent) {
+      sendCallSignal("", "hangup", {}).catch((error) => {
+        console.error("Hangup relay failed:", error);
+      });
+    }
+
+    stopLocalTracks();
+    closeAllPeerConnections();
+    renderRemoteMedia();
+    updateMediaControls();
+  }
+
+  function toggleMicrophone() {
+    const track = state.localStream?.getAudioTracks()[0];
+    if (!track) {
+      return;
+    }
+
+    track.enabled = !track.enabled;
+    state.micEnabled = track.enabled;
+    updateMediaControls();
+  }
+
+  function toggleCamera() {
+    const track = state.localStream?.getVideoTracks()[0];
+    if (!track) {
+      return;
+    }
+
+    track.enabled = !track.enabled;
+    state.cameraEnabled = track.enabled;
+    updateMediaControls();
   }
 
   function waitForSudokuPad(timeoutMs = 30_000) {
@@ -786,6 +1206,18 @@
         applySnapshot(snapshot);
       } catch (error) {
         console.error("Snapshot parse failed:", error);
+      }
+    });
+
+    source.addEventListener("call", (event) => {
+      try {
+        markStreamActivity();
+        const message = JSON.parse(event.data);
+        handleCallSignal(message).catch((error) => {
+          console.error("Call signal handling failed:", error);
+        });
+      } catch (error) {
+        console.error("Call signal parse failed:", error);
       }
     });
   }

@@ -14,6 +14,17 @@ const upstreamOrigin = process.env.UPSTREAM_ORIGIN || "https://sudokupad.app";
 const assetVersion = process.env.RENDER_GIT_COMMIT || "dev";
 const publicAppOrigin = process.env.PUBLIC_APP_ORIGIN || "https://sudokupad-party.onrender.com";
 const ctcFeedUrl = process.env.CTC_FEED_URL || "https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q";
+const defaultIceServers = [
+  { urls: ["stun:stun.l.google.com:19302"] }
+];
+const iceServers = (() => {
+  try {
+    const parsed = JSON.parse(process.env.COLLAB_ICE_SERVERS_JSON || "");
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : defaultIceServers;
+  } catch {
+    return defaultIceServers;
+  }
+})();
 const rooms = new Map();
 const ctcFeedCache = {
   expiresAt: 0,
@@ -414,7 +425,7 @@ async function servePublicAsset(res, pathname) {
 
 function injectCollabAssets(html) {
   const headTag = `<link rel="stylesheet" href="/assets/collab-client.css?v=${assetVersion}">`;
-  const configTag = `<script>window.__COLLAB_PUBLIC_ORIGIN__=${JSON.stringify(publicAppOrigin)};</script>`;
+  const configTag = `<script>window.__COLLAB_PUBLIC_ORIGIN__=${JSON.stringify(publicAppOrigin)};window.__COLLAB_ICE_SERVERS__=${JSON.stringify(iceServers)};</script>`;
   const scriptTag = `<script src="/assets/collab-client.js?v=${assetVersion}" defer></script>`;
   return html
     .replace("</head>", `${headTag}\n${configTag}\n</head>`)
@@ -1374,6 +1385,44 @@ async function handleRoomLookup(res, url, origin) {
   }, corsHeaders);
 }
 
+async function handleCallSignal(req, res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "default");
+  const room = getRoom(roomId);
+  const body = await readJsonBody(req);
+  const fromClientId = sanitizeRoomId(body.clientId, "");
+  const targetClientId = sanitizeRoomId(body.targetClientId, "");
+  const signalType = String(body.signalType || "").trim().slice(0, 48);
+
+  if (!fromClientId || !signalType || typeof body.payload !== "object" || body.payload === null) {
+    sendJson(res, 400, { error: "Missing call signal payload." });
+    return;
+  }
+
+  const eventPayload = {
+    roomId,
+    fromClientId,
+    targetClientId: targetClientId || null,
+    signalType,
+    payload: body.payload
+  };
+
+  for (const client of room.clients.values()) {
+    if (client.clientId === fromClientId) {
+      continue;
+    }
+
+    if (targetClientId && client.clientId !== targetClientId) {
+      continue;
+    }
+
+    if (!client.res.writableEnded) {
+      writeSse(client.res, "call", eventPayload);
+    }
+  }
+
+  sendJson(res, 200, { ok: true });
+}
+
 async function handleSync(res, url) {
   const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "default");
   const room = getRoom(roomId);
@@ -1517,6 +1566,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname.startsWith("/api/collab/register/")) {
       await handleRoomRegistration(req, res, url);
+      return;
+    }
+
+    if (req.method === "POST" && pathname.startsWith("/api/collab/call/")) {
+      await handleCallSignal(req, res, url);
       return;
     }
 

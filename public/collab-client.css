@@ -117,6 +117,10 @@
   gap: 8px;
 }
 
+.collab-dock__actions--media {
+  flex-wrap: wrap;
+}
+
 .collab-dock__button {
   flex: 1;
   appearance: none;
@@ -154,6 +158,53 @@
   font-size: 1rem;
   font-weight: 700;
   line-height: 1;
+}
+
+.collab-dock__media-status {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #c8d7df;
+  font-size: 0.88rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.collab-dock__local-video,
+.collab-dock__remote-video {
+  width: 100%;
+  min-height: 120px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.35);
+  object-fit: cover;
+}
+
+.collab-dock__local-video {
+  display: none;
+}
+
+.collab-dock__local-video--live {
+  display: block;
+}
+
+.collab-dock__remote-media {
+  display: grid;
+  gap: 10px;
+}
+
+.collab-dock__remote-card {
+  display: grid;
+  gap: 6px;
+}
+
+.collab-dock__remote-label {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: #c8d7df;
 }
 
 .collab-dock__peers {

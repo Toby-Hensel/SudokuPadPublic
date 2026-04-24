@@ -57,21 +57,38 @@ async function clickDigitButton(page, digit) {
   await page.locator(`button.digit[title="${digit}"]`).click({ force: true });
 }
 
+async function pressDigitKey(page, digit) {
+  await page.keyboard.press(String(digit));
+}
+
 async function clickControlButton(page, name) {
   await page.getByRole("button", { name }).click({ force: true });
 }
 
-async function waitForActionSync(page, validate) {
-  await page.waitForFunction(
-    (validatorSource) => {
-      const replay = Replay?.create?.(Framework?.app?.puzzle)?.actions || [];
-      // eslint-disable-next-line no-new-func
-      const validator = new Function("actions", `return (${validatorSource})(actions);`);
-      return Boolean(validator(replay));
-    },
-    validate.toString(),
-    { timeout: 10_000 }
-  );
+async function waitForReplaySync(pageA, pageB, previousActions, timeoutMs = 10_000) {
+  const previousHash = JSON.stringify(previousActions);
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const [actionsA, actionsB] = await Promise.all([
+      getReplayActions(pageA),
+      getReplayActions(pageB)
+    ]);
+    const hashA = JSON.stringify(actionsA);
+    const hashB = JSON.stringify(actionsB);
+
+    if (hashA !== previousHash && hashA === hashB) {
+      return actionsB;
+    }
+
+    await wait(100);
+  }
+
+  const [finalActionsA, finalActionsB] = await Promise.all([
+    getReplayActions(pageA),
+    getReplayActions(pageB)
+  ]);
+  throw new Error(`Replay mismatch after timeout. Sender=${JSON.stringify(finalActionsA)} Receiver=${JSON.stringify(finalActionsB)}`);
 }
 
 async function runScenario(browser, scenario) {
@@ -116,19 +133,19 @@ async function runScenario(browser, scenario) {
       await dismissStartPuzzle(pageA);
       await dismissStartPuzzle(pageB);
       const syncStartedAt = Date.now();
+      const previousActions = await getReplayActions(pageA);
       await action.run(pageA, box);
-      await waitForActionSync(pageB, action.validate);
+      const syncedActions = await waitForReplaySync(pageA, pageB, previousActions);
 
       const syncMs = Date.now() - syncStartedAt;
       if (syncMs > maxSyncMs) {
         throw new Error(`${scenario.label}:${action.label} exceeded ${maxSyncMs}ms (actual ${syncMs}ms).`);
       }
 
-      const actualActions = await getReplayActions(pageB);
       metrics.push({
         label: action.label,
         syncMs,
-        actions: actualActions
+        actions: syncedActions
       });
     }
 
@@ -190,40 +207,35 @@ async function main() {
               run: async (page, box) => {
                 await page.mouse.click(box.x + 40, box.y + 40);
                 await clickDigitButton(page, 5);
-              },
-              validate: (actions) => actions.some((action) => action.startsWith("vl:5"))
+              }
             },
             {
               label: "undo",
-              run: (page) => clickControlButton(page, "Undo"),
-              validate: (actions) => actions.some((action) => action.startsWith("ud/"))
+              run: (page) => clickControlButton(page, "Undo")
             },
             {
               label: "corner",
               run: async (page, box) => {
                 await clickControlButton(page, "Corner");
                 await page.mouse.click(box.x + 40, box.y + 40);
-                await clickDigitButton(page, 3);
-              },
-              validate: (actions) => actions.some((action) => action.startsWith("pm:3"))
+                await pressDigitKey(page, 3);
+              }
             },
             {
               label: "centre",
               run: async (page, box) => {
                 await clickControlButton(page, "Centre");
                 await page.mouse.click(box.x + 100, box.y + 40);
-                await clickDigitButton(page, 4);
-              },
-              validate: (actions) => actions.some((action) => action.startsWith("cd:4"))
+                await pressDigitKey(page, 4);
+              }
             },
             {
               label: "color",
               run: async (page, box) => {
                 await clickControlButton(page, "Color");
                 await page.mouse.click(box.x + 160, box.y + 40);
-                await clickDigitButton(page, 2);
-              },
-              validate: (actions) => actions.some((action) => action.startsWith("co:2"))
+                await pressDigitKey(page, 2);
+              }
             }
           ]
         },
@@ -236,17 +248,15 @@ async function main() {
               run: async (page, box) => {
                 await page.mouse.click(box.x + 40, box.y + 40);
                 await clickDigitButton(page, 7);
-              },
-              validate: (actions) => actions.some((action) => action.startsWith("vl:7"))
+              }
             },
             {
               label: "corner",
               run: async (page, box) => {
                 await clickControlButton(page, "Corner");
                 await page.mouse.click(box.x + 100, box.y + 40);
-                await clickDigitButton(page, 8);
-              },
-              validate: (actions) => actions.some((action) => action.startsWith("pm:8"))
+                await pressDigitKey(page, 8);
+              }
             }
           ]
         }

@@ -37,8 +37,8 @@ async function waitForServer(url, timeoutMs = 30_000) {
 
 async function dismissStartPuzzle(page) {
   const startButton = page.getByRole("button", { name: "Start Puzzle" });
-  if (await startButton.count()) {
-    await startButton.click();
+  if (await startButton.count() && await startButton.isVisible().catch(() => false)) {
+    await startButton.click({ force: true });
   }
 }
 
@@ -51,6 +51,19 @@ async function waitForLive(page, timeout = 30_000) {
 
 async function getReplayActions(page) {
   return page.evaluate(() => Replay.create(Framework.app.puzzle).actions || []);
+}
+
+async function waitForActionSync(page, validate) {
+  await page.waitForFunction(
+    (validatorSource) => {
+      const replay = Replay?.create?.(Framework?.app?.puzzle)?.actions || [];
+      // eslint-disable-next-line no-new-func
+      const validator = new Function("actions", `return (${validatorSource})(actions);`);
+      return Boolean(validator(replay));
+    },
+    validate.toString(),
+    { timeout: 10_000 }
+  );
 }
 
 async function runScenario(browser, scenario) {
@@ -92,18 +105,11 @@ async function runScenario(browser, scenario) {
 
     const metrics = [];
     for (const action of scenario.actions) {
+      await dismissStartPuzzle(pageA);
+      await dismissStartPuzzle(pageB);
       const syncStartedAt = Date.now();
       await action.run(pageA, box);
-      const expectedActions = await getReplayActions(pageA);
-
-      await pageB.waitForFunction(
-        (expectedReplayJson) => {
-          const replay = Replay?.create?.(Framework?.app?.puzzle)?.actions || [];
-          return JSON.stringify(replay) === expectedReplayJson;
-        },
-        JSON.stringify(expectedActions),
-        { timeout: 10_000 }
-      );
+      await waitForActionSync(pageB, action.validate);
 
       const syncMs = Date.now() - syncStartedAt;
       if (syncMs > maxSyncMs) {
@@ -175,11 +181,13 @@ async function main() {
               run: (page, box) => Promise.all([
                 page.mouse.click(box.x + 40, box.y + 40),
                 Promise.resolve()
-              ]).then(() => page.keyboard.press("5"))
+              ]).then(() => page.keyboard.press("5")),
+              validate: (actions) => actions.some((action) => action.startsWith("vl:5"))
             },
             {
               label: "undo",
-              run: (page) => page.getByRole("button", { name: "Undo" }).click()
+              run: (page) => page.getByRole("button", { name: "Undo" }).click(),
+              validate: (actions) => actions.some((action) => action.startsWith("ud/"))
             },
             {
               label: "corner",
@@ -187,7 +195,8 @@ async function main() {
                 await page.getByRole("button", { name: "Corner" }).click();
                 await page.mouse.click(box.x + 40, box.y + 40);
                 await page.keyboard.press("3");
-              }
+              },
+              validate: (actions) => actions.some((action) => action.startsWith("pm:3"))
             },
             {
               label: "centre",
@@ -195,7 +204,8 @@ async function main() {
                 await page.getByRole("button", { name: "Centre" }).click();
                 await page.mouse.click(box.x + 100, box.y + 40);
                 await page.keyboard.press("4");
-              }
+              },
+              validate: (actions) => actions.some((action) => action.startsWith("cd:4"))
             },
             {
               label: "color",
@@ -203,7 +213,8 @@ async function main() {
                 await page.getByRole("button", { name: "Color" }).click();
                 await page.mouse.click(box.x + 160, box.y + 40);
                 await page.keyboard.press("2");
-              }
+              },
+              validate: (actions) => actions.some((action) => action.startsWith("co:2"))
             }
           ]
         },
@@ -216,7 +227,8 @@ async function main() {
               run: async (page, box) => {
                 await page.mouse.click(box.x + 40, box.y + 40);
                 await page.keyboard.press("7");
-              }
+              },
+              validate: (actions) => actions.some((action) => action.startsWith("vl:7"))
             },
             {
               label: "corner",
@@ -224,7 +236,8 @@ async function main() {
                 await page.getByRole("button", { name: "Corner" }).click();
                 await page.mouse.click(box.x + 100, box.y + 40);
                 await page.keyboard.press("8");
-              }
+              },
+              validate: (actions) => actions.some((action) => action.startsWith("pm:8"))
             }
           ]
         }

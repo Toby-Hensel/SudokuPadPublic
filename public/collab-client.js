@@ -15,6 +15,7 @@
 
   const clientIdKey = `collab-client-id:${roomId}`;
   const nameKey = "collab-display-name";
+  const dockPositionKey = `collab-dock-position:${puzzleId}`;
   const immediateBroadcastDelayMs = 45;
   const fallbackBroadcastDelayMs = 120;
   const syncMonitorIntervalMs = 250;
@@ -45,6 +46,9 @@
     lastAppliedHash: "",
     syncRequestInFlight: false,
     pollHealthy: false,
+    dragPointerId: null,
+    dragOffsetX: 0,
+    dragOffsetY: 0,
     destroyed: false
   };
 
@@ -56,6 +60,7 @@
   setStatus("Connecting", "offline");
   setMeta(inviteLink);
   ui.nameInput.value = state.name;
+  restoreDockPosition();
 
   ui.copyButton.addEventListener("click", async () => {
     await navigator.clipboard.writeText(inviteLink);
@@ -75,6 +80,7 @@
     ui.toggleButton.setAttribute("aria-label", minimized ? "Expand live collaboration panel" : "Minimize live collaboration panel");
     ui.toggleButton.title = minimized ? "Expand" : "Minimize";
   });
+  ui.head.addEventListener("pointerdown", beginDockDrag);
 
   ui.nameInput.addEventListener("change", () => {
     state.name = ui.nameInput.value.trim() || state.name;
@@ -118,6 +124,7 @@
     if (state.eventSource) {
       state.eventSource.close();
     }
+    endDockDrag();
   });
 
   function createUi() {
@@ -154,6 +161,7 @@
 
     return {
       dock,
+      head: dock.querySelector(".collab-dock__head"),
       status: dock.querySelector(".collab-dock__status"),
       toggleButton: dock.querySelector(".collab-dock__toggle"),
       nameInput: dock.querySelector(".collab-dock__input"),
@@ -172,6 +180,100 @@
   function setMeta(text) {
     ui.meta.textContent = text;
     ui.meta.title = text;
+  }
+
+  function clampDockPosition(left, top) {
+    const rect = ui.dock.getBoundingClientRect();
+    const maxLeft = Math.max(0, window.innerWidth - rect.width);
+    const maxTop = Math.max(0, window.innerHeight - rect.height);
+
+    return {
+      left: Math.min(Math.max(0, left), maxLeft),
+      top: Math.min(Math.max(0, top), maxTop)
+    };
+  }
+
+  function applyDockPosition(left, top) {
+    const next = clampDockPosition(left, top);
+    ui.dock.style.left = `${next.left}px`;
+    ui.dock.style.top = `${next.top}px`;
+    ui.dock.style.right = "auto";
+    ui.dock.style.bottom = "auto";
+  }
+
+  function persistDockPosition() {
+    localStorage.setItem(dockPositionKey, JSON.stringify({
+      left: ui.dock.style.left,
+      top: ui.dock.style.top
+    }));
+  }
+
+  function restoreDockPosition() {
+    const raw = localStorage.getItem(dockPositionKey);
+    if (!raw) {
+      return;
+    }
+
+    try {
+      const saved = JSON.parse(raw);
+      const left = Number.parseFloat(saved.left);
+      const top = Number.parseFloat(saved.top);
+      if (Number.isFinite(left) && Number.isFinite(top)) {
+        applyDockPosition(left, top);
+      }
+    } catch {
+      localStorage.removeItem(dockPositionKey);
+    }
+  }
+
+  function moveDockWithPointer(clientX, clientY) {
+    applyDockPosition(clientX - state.dragOffsetX, clientY - state.dragOffsetY);
+  }
+
+  function onDockDragMove(event) {
+    if (event.pointerId !== state.dragPointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    moveDockWithPointer(event.clientX, event.clientY);
+  }
+
+  function endDockDrag(event) {
+    if (event && event.pointerId !== state.dragPointerId) {
+      return;
+    }
+
+    if (state.dragPointerId === null) {
+      return;
+    }
+
+    state.dragPointerId = null;
+    ui.dock.classList.remove("collab-dock--dragging");
+    window.removeEventListener("pointermove", onDockDragMove);
+    window.removeEventListener("pointerup", endDockDrag);
+    window.removeEventListener("pointercancel", endDockDrag);
+    persistDockPosition();
+  }
+
+  function beginDockDrag(event) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    if (event.target instanceof Element && event.target.closest("button, input, textarea, select, a, label")) {
+      return;
+    }
+
+    const rect = ui.dock.getBoundingClientRect();
+    state.dragPointerId = event.pointerId;
+    state.dragOffsetX = event.clientX - rect.left;
+    state.dragOffsetY = event.clientY - rect.top;
+    ui.dock.classList.add("collab-dock--dragging");
+
+    window.addEventListener("pointermove", onDockDragMove);
+    window.addEventListener("pointerup", endDockDrag);
+    window.addEventListener("pointercancel", endDockDrag);
   }
 
   function refreshConnectionStatus() {

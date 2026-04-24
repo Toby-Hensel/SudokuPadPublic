@@ -377,6 +377,22 @@ function sanitizeRoomId(value, fallback) {
   return candidate.replace(/[^a-z0-9_-]/g, "").slice(0, 64) || fallback || makeRoomId();
 }
 
+function getHeaderValue(header) {
+  if (Array.isArray(header)) {
+    return String(header[0] || "");
+  }
+  return String(header || "");
+}
+
+function getRequestOrigin(req) {
+  const forwardedProto = getHeaderValue(req.headers["x-forwarded-proto"]).split(",")[0].trim().toLowerCase();
+  const forwardedHost = getHeaderValue(req.headers["x-forwarded-host"]).split(",")[0].trim();
+  const hostHeader = forwardedHost || getHeaderValue(req.headers.host) || `localhost:${port}`;
+  const hostname = hostHeader.split(":")[0].toLowerCase();
+  const protocol = forwardedProto || (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" ? "http" : "https");
+  return `${protocol}://${hostHeader}`;
+}
+
 async function servePublicAsset(res, pathname) {
   const relativePath = pathname.replace(/^\/assets\//, "");
   const filePath = normalize(join(publicDir, relativePath));
@@ -1504,7 +1520,7 @@ setInterval(pruneRooms, 30_000).unref();
 
 const server = http.createServer(async (req, res) => {
   try {
-    const origin = `http://${req.headers.host || `localhost:${port}`}`;
+    const origin = getRequestOrigin(req);
     const url = new URL(req.url || "/", origin);
     const { pathname } = url;
     const preferredOrigin = getPreferredAppOrigin(origin);

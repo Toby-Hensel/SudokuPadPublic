@@ -516,31 +516,6 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         flex-wrap: wrap;
       }
 
-      .eyebrow-group {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-
-      .eyebrow {
-        display: inline-flex;
-        align-items: center;
-        gap: 10px;
-        padding: 8px 14px;
-        border-radius: 999px;
-        border: 1px solid var(--line);
-        background: rgba(255, 255, 255, 0.04);
-        color: var(--muted);
-        font-size: 0.92rem;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-      }
-
-      .eyebrow--gold {
-        color: var(--accent-2);
-        border-color: rgba(255, 215, 115, 0.24);
-      }
-
       .hero {
         display: grid;
         gap: 28px;
@@ -922,26 +897,6 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         background: rgba(255, 255, 255, 0.03);
       }
 
-      .facts {
-        display: grid;
-        gap: 14px;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        margin-top: 26px;
-      }
-
-      .fact {
-        padding: 18px;
-        border-radius: 18px;
-        border: 1px solid var(--line);
-        background: rgba(255, 255, 255, 0.04);
-      }
-
-      .fact strong {
-        display: block;
-        margin-bottom: 6px;
-        color: var(--accent-2);
-      }
-
       .mini {
         color: var(--muted);
         font-size: 0.92rem;
@@ -971,7 +926,6 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         }
 
         .hero-grid,
-        .facts,
         .hero-feed,
         .video-grid,
         .launch-card__grid {
@@ -1001,10 +955,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
     <main>
       <section class="hero-shell">
         <div class="topbar">
-          <div class="eyebrow-group">
-            <div class="eyebrow">Shared SudokuPad Rooms</div>
-            <div class="eyebrow eyebrow--gold">Landing Page Only Redesign</div>
-          </div>
+          <div></div>
           <div class="topbar-actions">
             <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">
               <span class="theme-toggle__icon" id="theme-toggle-icon">☀</span>
@@ -1081,21 +1032,6 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
               <div class="mini">Use the room name from the end of a shared collaboration link, after <code>?room=</code>.</div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section class="facts">
-        <div class="fact">
-          <strong>What stays compatible</strong>
-          <div class="mini">Short IDs like <code>/94Qq6qGjh2</code>, <code>/sudoku/94Qq6qGjh2</code>, and SudokuPad URLs with the puzzle embedded all resolve through the same upstream puzzle data.</div>
-        </div>
-        <div class="fact">
-          <strong>How syncing works</strong>
-          <div class="mini">The page mirrors SudokuPad's own replay/action format, so ordinary digit entry, notes, colors, and undo/redo stay aligned between solvers in the same room.</div>
-        </div>
-        <div class="fact">
-          <strong>Current deployment model</strong>
-          <div class="mini">Rooms are stored in server memory. That keeps setup simple for a single server, but you'll want Redis or a database-backed pub/sub layer before scaling across multiple instances.</div>
         </div>
       </section>
 

@@ -689,12 +689,14 @@ async function handleUpdate(req, res, url) {
   }
 
   const replay = body.replay;
+  const baseRevision = Number(body.baseRevision) || 0;
   const incomingHash = sha(JSON.stringify(replay));
-  const mergedReplay = mergeReplays(room.latest?.replay, replay);
-  const mergedHash = sha(JSON.stringify(mergedReplay));
+  const currentRevision = room.latest?.revision || 0;
+  const nextReplay = baseRevision >= currentRevision ? replay : mergeReplays(room.latest?.replay, replay);
+  const nextHash = sha(JSON.stringify(nextReplay));
   const previousHash = room.latest?.hash;
 
-  if (previousHash && previousHash === mergedHash) {
+  if (previousHash && previousHash === nextHash) {
     sendJson(res, 200, {
       roomId,
       revision: room.latest.revision,
@@ -707,11 +709,11 @@ async function handleUpdate(req, res, url) {
     roomId,
     revision: (room.latest?.revision || 0) + 1,
     updatedAt: Date.now(),
-    puzzleId: mergedReplay.puzzleId,
+    puzzleId: nextReplay.puzzleId,
     clientId: sanitizeRoomId(body.clientId, "anon"),
     name: String(body.name || "").trim().slice(0, 48),
-    replay: mergedReplay,
-    hash: mergedHash,
+    replay: nextReplay,
+    hash: nextHash,
     incomingHash
   };
   room.updatedAt = Date.now();

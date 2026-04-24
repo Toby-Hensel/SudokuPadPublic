@@ -18,10 +18,10 @@ $env:NODE_PATH='C:\Users\rubie\.cache\codex-runtimes\codex-primary-runtime\depen
 What it checks:
 
 - starts the local server
-- opens the same puzzle in two browser tabs
+- opens the same puzzle in two separate browser contexts
 - dismisses the start dialog
-- enters a digit in tab A through the real UI
-- verifies the digit appears in tab B
+- verifies real UI sync for digit, undo, corner marks, centre marks, and color
+- verifies polling-only fallback still syncs when the live stream endpoint is unavailable
 - fails if the sync takes longer than 2 seconds
 
 If this test fails, do not commit or push without explicitly telling the user.

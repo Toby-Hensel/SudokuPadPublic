@@ -18,6 +18,7 @@
   const immediateBroadcastDelayMs = 45;
   const fallbackBroadcastDelayMs = 120;
   const syncMonitorIntervalMs = 250;
+  const snapshotPollIntervalMs = 1000;
 
   const state = {
     roomId,
@@ -37,9 +38,13 @@
     reconnectTimer: null,
     healthTimer: null,
     syncTimer: null,
+    snapshotTimer: null,
     reconnectAttempts: 0,
     lastStreamEventAt: 0,
     lastLiveAt: 0,
+    lastAppliedHash: "",
+    syncRequestInFlight: false,
+    pollHealthy: false,
     destroyed: false
   };
 
@@ -81,6 +86,8 @@
   waitForSudokuPad()
     .then(() => {
       state.ready = true;
+      state.lastAppliedHash = getReplayHash(getReplayPayload());
+      state.lastSentHash = state.lastAppliedHash;
       patchActionBroadcasting();
       patchProgressSaving();
       startRealtime();
@@ -101,6 +108,9 @@
     }
     if (state.syncTimer) {
       window.clearInterval(state.syncTimer);
+    }
+    if (state.snapshotTimer) {
+      window.clearInterval(state.snapshotTimer);
     }
     if (state.reconnectTimer) {
       window.clearTimeout(state.reconnectTimer);
@@ -162,6 +172,21 @@
   function setMeta(text) {
     ui.meta.textContent = text;
     ui.meta.title = text;
+  }
+
+  function refreshConnectionStatus() {
+    if (state.applyingRemote) {
+      return;
+    }
+
+    if (state.live || state.pollHealthy) {
+      setStatus("Live", "live");
+      return;
+    }
+
+    if (state.ready) {
+      setStatus("Reconnecting", "offline");
+    }
   }
 
   function renderPresence(payload) {
@@ -308,7 +333,9 @@
     clearReconnectTimer();
     state.live = false;
     state.reconnectAttempts += 1;
-    setStatus(reason, "offline");
+    if (!state.pollHealthy) {
+      setStatus(reason, "offline");
+    }
 
     const delayMs = Math.min(10_000, 1_000 * Math.pow(1.6, Math.max(0, state.reconnectAttempts - 1)));
     state.reconnectTimer = window.setTimeout(() => {
@@ -354,9 +381,24 @@
     }, syncMonitorIntervalMs);
   }
 
+  function ensureSnapshotPolling() {
+    if (state.snapshotTimer) {
+      return;
+    }
+
+    state.snapshotTimer = window.setInterval(() => {
+      if (state.destroyed || !state.ready) {
+        return;
+      }
+
+      fetchLatestSnapshot({ silent: true }).catch(() => {});
+    }, snapshotPollIntervalMs);
+  }
+
   function startRealtime() {
     ensureHealthMonitor();
     ensureSyncMonitor();
+    ensureSnapshotPolling();
     connectStream();
     sendPresence();
   }
@@ -385,6 +427,7 @@
           clientId: state.clientId,
           name: state.name,
           puzzleId: state.puzzleId,
+          baseRevision: state.latestRevision,
           replay
         })
       });
@@ -395,10 +438,12 @@
 
       const payload = await response.json();
       state.lastSentHash = hash;
+      state.lastAppliedHash = hash;
       state.latestRevision = Math.max(state.latestRevision, Number(payload.revision) || 0);
+      state.pollHealthy = true;
+      refreshConnectionStatus();
     } catch (error) {
       console.error("Local replay push failed:", error);
-      setStatus("Reconnecting", "offline");
       scheduleReconnect("Reconnecting");
     } finally {
       const completedHash = state.inFlightHash;
@@ -450,12 +495,19 @@
     const replayApi = getReplayApi();
     const puzzleApi = getPuzzleApi();
     const currentReplay = replayApi.create(framework.app.puzzle);
-    const mergedReplay = mergeReplays(currentReplay, snapshot.replay);
     const currentHash = getReplayHash(currentReplay);
-    const mergedHash = getReplayHash(mergedReplay);
+    const snapshotHash = getReplayHash(snapshot.replay);
+    const hasUnsyncedLocalChanges = currentHash !== state.lastAppliedHash;
+    const nextReplay = hasUnsyncedLocalChanges ? mergeReplays(snapshot.replay, currentReplay) : snapshot.replay;
+    const nextHash = getReplayHash(nextReplay);
 
-    if (mergedHash === currentHash) {
-      setStatus("Live", "live");
+    if (nextHash === currentHash) {
+      state.pollHealthy = true;
+      if (!hasUnsyncedLocalChanges) {
+        state.lastAppliedHash = snapshotHash;
+        state.lastSentHash = snapshotHash;
+      }
+      refreshConnectionStatus();
       return;
     }
 
@@ -463,20 +515,27 @@
     setStatus(`Syncing from ${snapshot.name || "room"}`, "live");
 
     try {
-      await framework.app.loadReplay(mergedReplay, { speed: -1 });
-      const replayLength = puzzleApi.replayLength(mergedReplay);
+      await framework.app.loadReplay(nextReplay, { speed: -1 });
+      const replayLength = puzzleApi.replayLength(nextReplay);
 
       if (!Number.isNaN(replayLength)) {
         framework.app.timer.setStartTime(Date.now() - replayLength);
       }
 
-      setStatus("Live", "live");
+      state.pollHealthy = true;
+      if (hasUnsyncedLocalChanges) {
+        state.lastAppliedHash = snapshotHash;
+      } else {
+        state.lastAppliedHash = nextHash;
+        state.lastSentHash = nextHash;
+      }
+      refreshConnectionStatus();
     } catch (error) {
       console.error("Remote replay apply failed:", error);
       setStatus("Sync error", "offline");
     } finally {
       state.applyingRemote = false;
-      if (mergedHash !== state.lastSentHash) {
+      if (nextHash !== state.lastSentHash) {
         scheduleBroadcast();
       }
 
@@ -497,13 +556,55 @@
     const payload = await response.json();
     markStreamActivity();
     renderPresence(payload.presence);
+    state.pollHealthy = true;
 
     if (payload.snapshot) {
       await applySnapshot(payload.snapshot);
     } else if ((getFramework().app.puzzle.replayStack || []).length > 1) {
       scheduleBroadcast();
     } else {
-      setStatus("Live", "live");
+      state.lastAppliedHash = getReplayHash(getReplayPayload());
+      state.lastSentHash = state.lastAppliedHash;
+      refreshConnectionStatus();
+    }
+  }
+
+  async function fetchLatestSnapshot({ silent = false } = {}) {
+    if (state.syncRequestInFlight) {
+      return;
+    }
+
+    state.syncRequestInFlight = true;
+
+    try {
+      const response = await fetch(`/api/collab/sync/${encodeURIComponent(state.roomId)}?clientId=${encodeURIComponent(state.clientId)}`, {
+        headers: {
+          "cache-control": "no-store"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Snapshot poll failed with ${response.status}`);
+      }
+
+      const payload = await response.json();
+      markStreamActivity();
+      renderPresence(payload.presence);
+      state.pollHealthy = true;
+
+      if (payload.snapshot) {
+        await applySnapshot(payload.snapshot);
+      } else {
+        refreshConnectionStatus();
+      }
+    } catch (error) {
+      state.pollHealthy = false;
+      refreshConnectionStatus();
+      if (!silent) {
+        throw error;
+      }
+    } finally {
+      state.syncRequestInFlight = false;
     }
   }
 
@@ -525,7 +626,7 @@
       state.reconnectAttempts = 0;
       state.lastLiveAt = Date.now();
       markStreamActivity();
-      setStatus("Live", "live");
+      refreshConnectionStatus();
       sendPresence();
       fetchInitialSnapshot().catch((error) => {
         console.error("Initial snapshot fetch failed:", error);
@@ -537,6 +638,7 @@
       if (state.eventSource !== source || state.destroyed) {
         return;
       }
+      state.live = false;
       scheduleReconnect("Reconnecting");
     });
 

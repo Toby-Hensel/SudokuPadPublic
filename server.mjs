@@ -586,6 +586,13 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         margin-bottom: 10px;
       }
 
+      .hero-copy__tools {
+        margin-top: 18px;
+        display: grid;
+        gap: 10px;
+        max-width: 360px;
+      }
+
       .hero-grid {
         margin-top: 28px;
         display: grid;
@@ -997,10 +1004,17 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
               <div>
                 <h1>Latest Cracking the Cryptic puzzle links.</h1>
                 <p class="lede">
-                  The newest five official uploads that include a SudokuPad link are now right at the top. Each one opens a fresh collaboration room immediately.
+                  The newest five official uploads that include a SudokuPad link are now right at the top. Each one opens a fresh collaboration room immediately, or into a named room if you set one first.
                 </p>
               </div>
               <a class="section-link" href="https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer">Official upload feed</a>
+            </div>
+            <div class="hero-copy__tools">
+              <label>
+                Room name for Cracking the Cryptic links (optional)
+                <input id="ctc-room" name="ctc-room" placeholder="leave blank for a fresh private room" autocomplete="off">
+              </label>
+              <div class="mini">When filled in, every Create room from puzzle button above will use this room name instead of creating a random one.</div>
             </div>
             <div class="hero-feed">
               ${renderCtcVideoCards(ctcVideos, { compact: true })}
@@ -1079,6 +1093,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         const origin = ${JSON.stringify(preferredOrigin)};
         const sourceInput = document.getElementById("source");
         const roomInput = document.getElementById("room");
+        const ctcRoomInput = document.getElementById("ctc-room");
         const output = document.getElementById("output");
         const resultLink = document.getElementById("result-link");
         const copyLinkButton = document.getElementById("copy-link");
@@ -1242,7 +1257,10 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           button.addEventListener("click", () => {
             const source = button.getAttribute("data-ctc-puzzle-source");
             try {
-              window.location.href = buildLinkFromSource(source, { usePuzzleRoom: false });
+              window.location.href = buildLinkFromSource(source, {
+                usePuzzleRoom: false,
+                roomValue: ctcRoomInput.value
+              });
             } catch (error) {
               alert(error.message);
             }

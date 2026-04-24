@@ -109,15 +109,15 @@ async function main() {
       await pageB.getByRole("button", { name: "Join AV" }).click();
 
       await Promise.all([
-        pageA.waitForFunction(() => document.querySelectorAll(".collab-dock__remote-video").length >= 1, { timeout: 20_000 }),
-        pageB.waitForFunction(() => document.querySelectorAll(".collab-dock__remote-video").length >= 1, { timeout: 20_000 })
+        pageA.waitForFunction(() => document.querySelectorAll(".collab-media-panel__remote-grid .collab-media-panel__video").length >= 1, { timeout: 20_000 }),
+        pageB.waitForFunction(() => document.querySelectorAll(".collab-media-panel__remote-grid .collab-media-panel__video").length >= 1, { timeout: 20_000 })
       ]);
 
       console.log(JSON.stringify({
         aStatus: await pageA.locator(".collab-dock__media-status").textContent(),
         bStatus: await pageB.locator(".collab-dock__media-status").textContent(),
-        aRemote: await pageA.locator(".collab-dock__remote-video").count(),
-        bRemote: await pageB.locator(".collab-dock__remote-video").count()
+        aRemote: await pageA.locator(".collab-media-panel__remote-grid .collab-media-panel__video").count(),
+        bRemote: await pageB.locator(".collab-media-panel__remote-grid .collab-media-panel__video").count()
       }, null, 2));
 
       await Promise.all([

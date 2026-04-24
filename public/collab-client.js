@@ -63,6 +63,7 @@
     micEnabled: true,
     cameraEnabled: true,
     peerConnections: new Map(),
+    remoteTiles: new Map(),
     dragPointerId: null,
     dragOffsetX: 0,
     dragOffsetY: 0,
@@ -190,12 +191,24 @@
             <button class="collab-dock__button collab-dock__button--secondary" type="button" disabled>Cam on</button>
             <button class="collab-dock__button collab-dock__button--secondary" type="button" disabled>Leave</button>
           </div>
-          <video class="collab-dock__local-video" autoplay muted playsinline></video>
-          <div class="collab-dock__remote-media"></div>
         </div>
       </div>
     `;
     document.body.appendChild(dock);
+
+    const mediaPanel = document.createElement("section");
+    mediaPanel.className = "collab-media-panel";
+    mediaPanel.innerHTML = `
+      <div class="collab-media-panel__title">Camera Feeds</div>
+      <div class="collab-media-panel__grid">
+        <div class="collab-media-panel__card collab-media-panel__card--local collab-media-panel__card--hidden">
+          <video class="collab-media-panel__video collab-media-panel__video--local" autoplay muted playsinline></video>
+          <div class="collab-media-panel__label">You</div>
+        </div>
+        <div class="collab-media-panel__remote-grid"></div>
+      </div>
+    `;
+    document.body.appendChild(mediaPanel);
 
     const inviteActions = dock.querySelectorAll(".collab-dock__actions")[0];
     const mediaActions = dock.querySelector(".collab-dock__actions--media");
@@ -215,8 +228,10 @@
       micButton: mediaActions.querySelectorAll(".collab-dock__button--secondary")[0],
       cameraButton: mediaActions.querySelectorAll(".collab-dock__button--secondary")[1],
       leaveMediaButton: mediaActions.querySelectorAll(".collab-dock__button--secondary")[2],
-      localVideo: dock.querySelector(".collab-dock__local-video"),
-      remoteMedia: dock.querySelector(".collab-dock__remote-media")
+      mediaPanel,
+      localVideoCard: mediaPanel.querySelector(".collab-media-panel__card--local"),
+      localVideo: mediaPanel.querySelector(".collab-media-panel__video--local"),
+      remoteMedia: mediaPanel.querySelector(".collab-media-panel__remote-grid")
     };
   }
 
@@ -393,39 +408,82 @@
     return peer?.clientId === state.clientId ? `${peer.name} (you)` : (peer?.name || `Solver ${peerId.slice(0, 4)}`);
   }
 
-  function renderRemoteMedia() {
-    ui.remoteMedia.innerHTML = "";
-
-    if (state.localStream) {
-      ui.localVideo.srcObject = state.localStream;
-      ui.localVideo.classList.add("collab-dock__local-video--live");
-    } else {
-      ui.localVideo.srcObject = null;
-      ui.localVideo.classList.remove("collab-dock__local-video--live");
+  function ensureRemoteTile(peerId) {
+    let tile = state.remoteTiles.get(peerId);
+    if (tile) {
+      return tile;
     }
 
+    const card = document.createElement("div");
+    card.className = "collab-media-panel__card";
+
+    const video = document.createElement("video");
+    video.className = "collab-media-panel__video";
+    video.autoplay = true;
+    video.playsInline = true;
+    card.appendChild(video);
+
+    const label = document.createElement("div");
+    label.className = "collab-media-panel__label";
+    card.appendChild(label);
+
+    ui.remoteMedia.appendChild(card);
+    tile = { card, video, label };
+    state.remoteTiles.set(peerId, tile);
+    return tile;
+  }
+
+  function removeRemoteTile(peerId) {
+    const tile = state.remoteTiles.get(peerId);
+    if (!tile) {
+      return;
+    }
+
+    tile.video.srcObject = null;
+    tile.card.remove();
+    state.remoteTiles.delete(peerId);
+  }
+
+  function updateMediaPanelVisibility() {
+    const hasRemoteTiles = [...state.remoteTiles.values()].some((tile) => tile.video.srcObject);
+    const shouldShow = Boolean(state.localStream) || hasRemoteTiles;
+    ui.mediaPanel.classList.toggle("collab-media-panel--visible", shouldShow);
+  }
+
+  function renderRemoteMedia() {
+    if (state.localStream) {
+      if (ui.localVideo.srcObject !== state.localStream) {
+        ui.localVideo.srcObject = state.localStream;
+      }
+      ui.localVideoCard.classList.remove("collab-media-panel__card--hidden");
+    } else {
+      if (ui.localVideo.srcObject) {
+        ui.localVideo.srcObject = null;
+      }
+      ui.localVideoCard.classList.add("collab-media-panel__card--hidden");
+    }
+
+    const activePeerIds = new Set();
     for (const [peerId, entry] of state.peerConnections.entries()) {
       if (!entry.remoteStream || entry.remoteStream.getTracks().length === 0) {
         continue;
       }
 
-      const card = document.createElement("div");
-      card.className = "collab-dock__remote-card";
-
-      const video = document.createElement("video");
-      video.className = "collab-dock__remote-video";
-      video.autoplay = true;
-      video.playsInline = true;
-      video.srcObject = entry.remoteStream;
-      card.appendChild(video);
-
-      const label = document.createElement("div");
-      label.className = "collab-dock__remote-label";
-      label.textContent = getPeerLabel(peerId);
-      card.appendChild(label);
-
-      ui.remoteMedia.appendChild(card);
+      activePeerIds.add(peerId);
+      const tile = ensureRemoteTile(peerId);
+      if (tile.video.srcObject !== entry.remoteStream) {
+        tile.video.srcObject = entry.remoteStream;
+      }
+      tile.label.textContent = getPeerLabel(peerId);
     }
+
+    for (const peerId of [...state.remoteTiles.keys()]) {
+      if (!activePeerIds.has(peerId)) {
+        removeRemoteTile(peerId);
+      }
+    }
+
+    updateMediaPanelVisibility();
   }
 
   function updateMediaControls() {
@@ -468,6 +526,7 @@
     entry.pc.onconnectionstatechange = null;
     entry.pc.close();
     state.peerConnections.delete(peerId);
+    removeRemoteTile(peerId);
     renderRemoteMedia();
     updateMediaControls();
   }

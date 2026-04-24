@@ -172,41 +172,6 @@
   letter-spacing: 0;
 }
 
-.collab-dock__local-video,
-.collab-dock__remote-video {
-  width: 100%;
-  min-height: 120px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.35);
-  object-fit: cover;
-}
-
-.collab-dock__local-video {
-  display: none;
-}
-
-.collab-dock__local-video--live {
-  display: block;
-}
-
-.collab-dock__remote-media {
-  display: grid;
-  gap: 10px;
-}
-
-.collab-dock__remote-card {
-  display: grid;
-  gap: 6px;
-}
-
-.collab-dock__remote-label {
-  font-size: 0.78rem;
-  letter-spacing: 0.02em;
-  text-transform: none;
-  color: #c8d7df;
-}
-
 .collab-dock__peers {
   display: flex;
   flex-wrap: wrap;
@@ -221,11 +186,83 @@
   background: rgba(255, 255, 255, 0.07);
 }
 
+.collab-media-panel {
+  position: fixed;
+  top: 18px;
+  right: 356px;
+  z-index: 9998;
+  width: min(460px, calc(100vw - 380px));
+  display: none;
+  padding: 14px;
+  border: 1px solid rgba(124, 245, 191, 0.18);
+  border-radius: 18px;
+  background: rgba(6, 16, 23, 0.9);
+  color: #eff7fb;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(16px);
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+}
+
+.collab-media-panel--visible {
+  display: block;
+}
+
+.collab-media-panel__title {
+  margin-bottom: 10px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8aa4b3;
+}
+
+.collab-media-panel__grid,
+.collab-media-panel__remote-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.collab-media-panel__remote-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.collab-media-panel__card {
+  display: grid;
+  gap: 8px;
+}
+
+.collab-media-panel__card--hidden {
+  display: none;
+}
+
+.collab-media-panel__video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.35);
+  object-fit: cover;
+}
+
+.collab-media-panel__label {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: #c8d7df;
+}
+
 @media (max-width: 720px) {
   .collab-dock {
     top: auto;
     right: 12px;
     bottom: 12px;
+    left: 12px;
+    width: auto;
+  }
+
+  .collab-media-panel {
+    top: 12px;
+    right: 12px;
     left: 12px;
     width: auto;
   }

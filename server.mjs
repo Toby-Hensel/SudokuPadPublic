@@ -102,7 +102,6 @@ async function fetchLatestCtcVideos(limit = 5) {
 
   const xml = await response.text();
   const entries = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/gi)]
-    .slice(0, limit)
     .map((match) => match[1]);
 
   const videos = entries.map((entry) => {
@@ -122,7 +121,7 @@ async function fetchLatestCtcVideos(limit = 5) {
       sudokuPadUrl,
       hasSudokuPadUrl: Boolean(sudokuPadUrl)
     };
-  });
+  }).filter((video) => video.hasSudokuPadUrl).slice(0, limit);
 
   ctcFeedCache.videos = videos;
   ctcFeedCache.lastFetchedAt = new Date().toISOString();
@@ -154,9 +153,7 @@ function renderCtcVideoCards(videos) {
         <h3>${escapeHtml(video.title)}</h3>
         <div class="video-card__actions">
           <a class="video-card__button video-card__button--watch" href="${escapeHtml(video.youtubeUrl)}" target="_blank" rel="noreferrer">Watch on YouTube</a>
-          ${video.hasSudokuPadUrl
-            ? `<a class="video-card__button video-card__button--play" href="${escapeHtml(video.sudokuPadUrl)}" target="_blank" rel="noreferrer">Open SudokuPad</a>`
-            : `<span class="video-card__button video-card__button--muted">No puzzle link in description</span>`}
+          <button class="video-card__button video-card__button--play" type="button" data-ctc-puzzle-source="${escapeHtml(video.sudokuPadUrl)}">Create room from puzzle</button>
         </div>
       </div>
     </article>
@@ -923,8 +920,8 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
       <section class="spotlight">
         <div class="section-top">
           <div>
-            <h2>Latest From Cracking the Cryptic</h2>
-            <p>The five newest uploads from the official YouTube channel, with their thumbnails and direct SudokuPad links whenever the description includes one.</p>
+            <h2>Latest Puzzle Videos From Cracking the Cryptic</h2>
+            <p>The newest five uploads from the official channel that actually include a SudokuPad puzzle link, with thumbnails plus one-click room creation.</p>
           </div>
           <a class="section-link" href="https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer">Official upload feed</a>
         </div>
@@ -992,20 +989,32 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           return Math.random().toString(36).slice(2, 10);
         }
 
-        function buildLink({ usePuzzleRoom }) {
-          const puzzleId = extractPuzzleId(sourceInput.value);
+        function buildLinkFromSource(source, { usePuzzleRoom, roomValue } = {}) {
+          const puzzleId = extractPuzzleId(source);
           if (!puzzleId) {
-            sourceInput.focus();
             throw new Error("Please enter a SudokuPad link or puzzle ID.");
           }
 
           const room = usePuzzleRoom
             ? slugifyRoom(puzzleId)
-            : slugifyRoom(roomInput.value) || randomRoom();
+            : slugifyRoom(roomValue) || randomRoom();
 
           const link = new URL(origin + "/" + encodeURIComponent(puzzleId));
           link.searchParams.set("room", room);
           return link.toString();
+        }
+
+        function buildLink({ usePuzzleRoom }) {
+          const source = sourceInput.value;
+          try {
+            return buildLinkFromSource(source, {
+              usePuzzleRoom,
+              roomValue: roomInput.value
+            });
+          } catch (error) {
+            sourceInput.focus();
+            throw error;
+          }
         }
 
         function showLink(link) {
@@ -1044,6 +1053,17 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           if (resultLink.href) {
             window.location.href = resultLink.href;
           }
+        });
+
+        document.querySelectorAll("[data-ctc-puzzle-source]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const source = button.getAttribute("data-ctc-puzzle-source");
+            try {
+              window.location.href = buildLinkFromSource(source, { usePuzzleRoom: false });
+            } catch (error) {
+              alert(error.message);
+            }
+          });
         });
       })();
     </script>

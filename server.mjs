@@ -13,7 +13,13 @@ const host = process.env.HOST || "0.0.0.0";
 const upstreamOrigin = process.env.UPSTREAM_ORIGIN || "https://sudokupad.app";
 const assetVersion = process.env.RENDER_GIT_COMMIT || "dev";
 const publicAppOrigin = process.env.PUBLIC_APP_ORIGIN || "https://sudokupad-party.onrender.com";
+const ctcFeedUrl = process.env.CTC_FEED_URL || "https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q";
 const rooms = new Map();
+const ctcFeedCache = {
+  expiresAt: 0,
+  videos: [],
+  lastFetchedAt: null
+};
 
 const publicContentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -41,6 +47,120 @@ function escapeHtml(value) {
     '"': "&quot;",
     "'": "&#39;"
   })[char]);
+}
+
+function decodeXml(value) {
+  return String(value || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function extractXmlValue(block, tagName) {
+  const match = block.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "i"));
+  return match ? decodeXml(match[1].trim()) : "";
+}
+
+function extractXmlAttribute(block, tagName, attribute) {
+  const match = block.match(new RegExp(`<${tagName}\\b[^>]*\\b${attribute}="([^"]+)"`, "i"));
+  return match ? decodeXml(match[1].trim()) : "";
+}
+
+function extractSudokuPadUrl(description) {
+  const match = String(description || "").match(/https?:\/\/(?:sudokupad\.app|app\.crackingthecryptic\.com\/sudoku)\/[^\s<>"']+/i);
+  return match ? match[0].replace(/[)\].,;!?]+$/, "") : "";
+}
+
+function formatPublishedDate(isoString) {
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric"
+    }).format(new Date(isoString));
+  } catch {
+    return isoString;
+  }
+}
+
+async function fetchLatestCtcVideos(limit = 5) {
+  if (Date.now() < ctcFeedCache.expiresAt && ctcFeedCache.videos.length >= limit) {
+    return ctcFeedCache.videos.slice(0, limit);
+  }
+
+  const response = await fetch(ctcFeedUrl, {
+    headers: {
+      "user-agent": "SudokuPad Party Landing Page"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Cracking the Cryptic feed request failed with ${response.status}`);
+  }
+
+  const xml = await response.text();
+  const entries = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/gi)]
+    .slice(0, limit)
+    .map((match) => match[1]);
+
+  const videos = entries.map((entry) => {
+    const title = extractXmlValue(entry, "title");
+    const youtubeUrl = extractXmlAttribute(entry, "link", "href");
+    const publishedAt = extractXmlValue(entry, "published");
+    const thumbnailUrl = extractXmlAttribute(entry, "media:thumbnail", "url");
+    const description = extractXmlValue(entry, "media:description");
+    const sudokuPadUrl = extractSudokuPadUrl(description);
+
+    return {
+      title,
+      youtubeUrl,
+      publishedAt,
+      publishedLabel: formatPublishedDate(publishedAt),
+      thumbnailUrl,
+      sudokuPadUrl,
+      hasSudokuPadUrl: Boolean(sudokuPadUrl)
+    };
+  });
+
+  ctcFeedCache.videos = videos;
+  ctcFeedCache.lastFetchedAt = new Date().toISOString();
+  ctcFeedCache.expiresAt = Date.now() + 10 * 60 * 1000;
+
+  return videos;
+}
+
+function renderCtcVideoCards(videos) {
+  if (!videos.length) {
+    return `
+      <div class="ctc-empty">
+        <strong>Latest uploads are loading awkwardly right now.</strong>
+        <div class="mini">The launch tools still work. Try refreshing in a moment and the feed should repopulate.</div>
+      </div>
+    `;
+  }
+
+  return videos.map((video) => `
+    <article class="video-card">
+      <a class="video-card__thumb" href="${escapeHtml(video.youtubeUrl)}" target="_blank" rel="noreferrer">
+        <img src="${escapeHtml(video.thumbnailUrl)}" alt="${escapeHtml(video.title)} thumbnail" loading="lazy">
+      </a>
+      <div class="video-card__body">
+        <div class="video-card__meta">
+          <span class="video-card__badge">${video.hasSudokuPadUrl ? "SudokuPad linked" : "No SudokuPad link"}</span>
+          <span>${escapeHtml(video.publishedLabel)}</span>
+        </div>
+        <h3>${escapeHtml(video.title)}</h3>
+        <div class="video-card__actions">
+          <a class="video-card__button video-card__button--watch" href="${escapeHtml(video.youtubeUrl)}" target="_blank" rel="noreferrer">Watch on YouTube</a>
+          ${video.hasSudokuPadUrl
+            ? `<a class="video-card__button video-card__button--play" href="${escapeHtml(video.sudokuPadUrl)}" target="_blank" rel="noreferrer">Open SudokuPad</a>`
+            : `<span class="video-card__button video-card__button--muted">No puzzle link in description</span>`}
+        </div>
+      </div>
+    </article>
+  `).join("");
 }
 
 function isLocalOrPrivateHostname(hostname) {
@@ -273,7 +393,7 @@ function injectCollabAssets(html) {
     .replace("</body>", `${scriptTag}\n</body>`);
 }
 
-function renderHomePage(origin, preferredOrigin) {
+function renderHomePage(origin, preferredOrigin, ctcVideos) {
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -282,16 +402,20 @@ function renderHomePage(origin, preferredOrigin) {
     <title>SudokuPad Party</title>
     <style>
       :root {
-        --bg: #08131b;
-        --panel: rgba(11, 27, 39, 0.86);
-        --panel-strong: rgba(10, 22, 32, 0.96);
-        --text: #f3f6f8;
-        --muted: #9bb5c4;
-        --line: rgba(173, 216, 230, 0.18);
-        --accent: #7cf5bf;
-        --accent-2: #ffd36d;
-        --danger: #ff8b7f;
-        --shadow: 0 28px 80px rgba(0, 0, 0, 0.4);
+        --bg: #081019;
+        --panel: rgba(11, 24, 37, 0.88);
+        --panel-strong: rgba(7, 18, 28, 0.95);
+        --panel-soft: rgba(255, 255, 255, 0.04);
+        --text: #f6f8fb;
+        --muted: #9eb6c4;
+        --line: rgba(173, 216, 230, 0.16);
+        --accent: #8ff7cb;
+        --accent-2: #ffd773;
+        --accent-3: #7db6ff;
+        --danger: #ff9d8f;
+        --shadow: 0 30px 90px rgba(0, 0, 0, 0.42);
+        --radius-xl: 28px;
+        --radius-lg: 20px;
       }
 
       * {
@@ -304,22 +428,35 @@ function renderHomePage(origin, preferredOrigin) {
         font-family: "Space Grotesk", "Segoe UI", sans-serif;
         color: var(--text);
         background:
-          radial-gradient(circle at top left, rgba(124, 245, 191, 0.18), transparent 36%),
-          radial-gradient(circle at 85% 10%, rgba(255, 211, 109, 0.18), transparent 28%),
-          linear-gradient(160deg, #051017 0%, #0b1620 48%, #06131b 100%);
+          radial-gradient(circle at 12% 18%, rgba(143, 247, 203, 0.18), transparent 26%),
+          radial-gradient(circle at 84% 9%, rgba(125, 182, 255, 0.16), transparent 30%),
+          radial-gradient(circle at 74% 72%, rgba(255, 215, 115, 0.13), transparent 24%),
+          linear-gradient(150deg, #040a11 0%, #08131c 44%, #04090f 100%);
       }
 
       main {
-        width: min(1080px, calc(100% - 32px));
+        width: min(1200px, calc(100% - 32px));
         margin: 0 auto;
-        padding: 48px 0 64px;
+        padding: 34px 0 72px;
       }
 
-      .hero {
+      .hero-shell {
         display: grid;
         gap: 28px;
-        grid-template-columns: 1.15fr 0.85fr;
-        align-items: start;
+      }
+
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .eyebrow-group {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
       }
 
       .eyebrow {
@@ -336,6 +473,45 @@ function renderHomePage(origin, preferredOrigin) {
         text-transform: uppercase;
       }
 
+      .eyebrow--gold {
+        color: var(--accent-2);
+        border-color: rgba(255, 215, 115, 0.24);
+      }
+
+      .hero {
+        display: grid;
+        gap: 28px;
+        grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+        align-items: stretch;
+      }
+
+      .hero-copy,
+      .launch-card,
+      .spotlight,
+      .video-card {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .hero-copy {
+        position: relative;
+        overflow: hidden;
+        padding: 34px;
+        border-radius: var(--radius-xl);
+      }
+
+      .hero-copy::after {
+        content: "";
+        position: absolute;
+        inset: auto -80px -80px auto;
+        width: 240px;
+        height: 240px;
+        background: radial-gradient(circle, rgba(143, 247, 203, 0.18), transparent 70%);
+        pointer-events: none;
+      }
+
       h1 {
         margin: 18px 0 14px;
         font-size: clamp(2.8rem, 7vw, 5.6rem);
@@ -344,19 +520,56 @@ function renderHomePage(origin, preferredOrigin) {
       }
 
       .lede {
-        max-width: 42rem;
+        max-width: 44rem;
         color: var(--muted);
         font-size: 1.1rem;
         line-height: 1.6;
       }
 
-      .card {
+      .hero-grid {
+        margin-top: 28px;
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .hero-stat {
+        padding: 16px 18px;
+        border-radius: 18px;
+        background: var(--panel-soft);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .hero-stat strong {
+        display: block;
+        font-size: 1rem;
+        margin-bottom: 6px;
+        color: var(--accent);
+      }
+
+      .hero-stat span {
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.45;
+      }
+
+      .launch-card {
+        border-radius: var(--radius-xl);
         padding: 24px;
-        border: 1px solid var(--line);
-        border-radius: 24px;
-        background: var(--panel);
-        box-shadow: var(--shadow);
-        backdrop-filter: blur(18px);
+        display: grid;
+        gap: 18px;
+      }
+
+      .launch-card__title {
+        font-size: 1.2rem;
+        font-weight: 700;
+      }
+
+      .launch-card__note {
+        margin: -4px 0 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1.5;
       }
 
       form {
@@ -432,9 +645,144 @@ function renderHomePage(origin, preferredOrigin) {
         word-break: break-all;
       }
 
+      .spotlight {
+        margin-top: 26px;
+        border-radius: var(--radius-xl);
+        padding: 26px;
+      }
+
+      .section-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        align-items: end;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+      }
+
+      .section-top h2 {
+        margin: 0;
+        font-size: clamp(1.8rem, 4vw, 2.6rem);
+        letter-spacing: -0.04em;
+      }
+
+      .section-top p {
+        margin: 0;
+        color: var(--muted);
+        max-width: 40rem;
+        line-height: 1.55;
+      }
+
+      .section-link {
+        color: var(--accent);
+        text-decoration: none;
+        font-weight: 700;
+      }
+
+      .video-grid {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+
+      .video-card {
+        overflow: hidden;
+        border-radius: 22px;
+      }
+
+      .video-card__thumb {
+        display: block;
+        aspect-ratio: 16 / 9;
+        overflow: hidden;
+        background: #0b1620;
+      }
+
+      .video-card__thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .video-card__body {
+        padding: 18px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .video-card__meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .video-card__badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(143, 247, 203, 0.12);
+        color: var(--accent);
+        border: 1px solid rgba(143, 247, 203, 0.18);
+      }
+
+      .video-card h3 {
+        margin: 0;
+        font-size: 1.02rem;
+        line-height: 1.35;
+      }
+
+      .video-card__actions {
+        display: grid;
+        gap: 10px;
+      }
+
+      .video-card__button {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 44px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        text-decoration: none;
+        font-weight: 700;
+        font-size: 0.92rem;
+      }
+
+      .video-card__button--watch {
+        color: #06131b;
+        background: linear-gradient(135deg, var(--accent-2), #ffe59c);
+      }
+
+      .video-card__button--play {
+        color: var(--text);
+        background: rgba(125, 182, 255, 0.16);
+        border: 1px solid rgba(125, 182, 255, 0.22);
+      }
+
+      .video-card__button--muted {
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .ctc-empty {
+        padding: 22px;
+        border-radius: 20px;
+        border: 1px dashed rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
       .facts {
         display: grid;
         gap: 14px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin-top: 26px;
       }
 
       .fact {
@@ -462,9 +810,39 @@ function renderHomePage(origin, preferredOrigin) {
         font-size: 0.92rem;
       }
 
+      .footer code {
+        color: var(--text);
+      }
+
+      @media (max-width: 1100px) {
+        .video-grid {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+
       @media (max-width: 900px) {
         .hero {
           grid-template-columns: 1fr;
+        }
+
+        .hero-grid,
+        .facts,
+        .video-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 640px) {
+        main {
+          width: min(100%, calc(100% - 20px));
+          padding-top: 22px;
+        }
+
+        .hero-copy,
+        .launch-card,
+        .spotlight {
+          padding: 20px;
+          border-radius: 22px;
         }
       }
     </style>
@@ -474,44 +852,88 @@ function renderHomePage(origin, preferredOrigin) {
   </head>
   <body>
     <main>
-      <section class="hero">
-        <div>
-          <div class="eyebrow">Real-time SudokuPad rooms</div>
-          <h1>Open the same SudokuPad links, but solve them together.</h1>
-          <p class="lede">
-            Paste any SudokuPad URL or short puzzle ID and this site will open the official puzzle board through a collaboration-enabled proxy.
-            Everyone in the same room sees the board update live.
-          </p>
-          ${origin !== preferredOrigin ? `<p class="lede"><strong>Public collaboration mode:</strong> this local app will generate links on <code>${escapeHtml(preferredOrigin)}</code> so people on different networks join the same shared room.</p>` : ""}
+      <section class="hero-shell">
+        <div class="topbar">
+          <div class="eyebrow-group">
+            <div class="eyebrow">Shared SudokuPad Rooms</div>
+            <div class="eyebrow eyebrow--gold">Landing Page Only Redesign</div>
+          </div>
+          <a class="section-link" href="https://www.youtube.com/channel/UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer">Cracking the Cryptic on YouTube</a>
         </div>
 
-        <div class="card">
-          <form id="launch-form">
-            <label>
-              SudokuPad link or ID
-              <input id="source" name="source" placeholder="https://sudokupad.app/94Qq6qGjh2" autocomplete="off">
-            </label>
-            <label>
-              Room name (optional)
-              <input id="room" name="room" placeholder="leave blank to create a fresh private room" autocomplete="off">
-            </label>
-            <div class="actions">
-              <button class="primary" type="submit">Create collaboration link</button>
-              <button class="secondary" type="button" id="open-public">Use shared puzzle room</button>
+        <div class="hero">
+          <div class="hero-copy">
+            <h1>Launch one link, solve together, keep the puzzle page pristine.</h1>
+            <p class="lede">
+              Paste any SudokuPad URL or short ID and this launcher creates a shared room without changing the underlying SudokuPad experience.
+              The board page stays familiar. The coordination gets much easier.
+            </p>
+            <p class="lede">
+              ${origin !== preferredOrigin
+                ? `This local launcher is currently set to create collaboration links on <code>${escapeHtml(preferredOrigin)}</code> so solvers on different networks still land in the same room.`
+                : `You are already on the public collaboration host, so the links you create here are ready to share across different networks immediately.`}
+            </p>
+            <div class="hero-grid">
+              <div class="hero-stat">
+                <strong>Zero puzzle-page redesign</strong>
+                <span>The actual SudokuPad solve page stays visually identical unless you ask to change it.</span>
+              </div>
+              <div class="hero-stat">
+                <strong>Built for sharing</strong>
+                <span>Private room names, copyable public links, and shared puzzle-room links are all one click away.</span>
+              </div>
+              <div class="hero-stat">
+                <strong>CTC-ready launcher</strong>
+                <span>The latest Cracking the Cryptic uploads with puzzle links are surfaced below so you can jump straight in.</span>
+              </div>
             </div>
-          </form>
-          <div class="output" id="output">
-            <strong>Your collaboration link</strong>
-            <a id="result-link" href="#"></a>
-            <div class="actions">
-              <button class="secondary" type="button" id="copy-link">Copy link</button>
-              <button class="primary" type="button" id="open-link">Open room</button>
+          </div>
+
+          <div class="launch-card">
+            <div>
+              <div class="launch-card__title">Launch A Room</div>
+              <p class="launch-card__note">Paste a SudokuPad URL or short puzzle ID. I’ll generate a collaboration link on the correct host for sharing.</p>
+            </div>
+            <form id="launch-form">
+              <label>
+                SudokuPad link or ID
+                <input id="source" name="source" placeholder="https://sudokupad.app/94Qq6qGjh2" autocomplete="off">
+              </label>
+              <label>
+                Room name (optional)
+                <input id="room" name="room" placeholder="leave blank to create a fresh private room" autocomplete="off">
+              </label>
+              <div class="actions">
+                <button class="primary" type="submit">Create collaboration link</button>
+                <button class="secondary" type="button" id="open-public">Use shared puzzle room</button>
+              </div>
+            </form>
+            <div class="output" id="output">
+              <strong>Your collaboration link</strong>
+              <a id="result-link" href="#"></a>
+              <div class="actions">
+                <button class="secondary" type="button" id="copy-link">Copy link</button>
+                <button class="primary" type="button" id="open-link">Open room</button>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="facts" style="margin-top: 26px;">
+      <section class="spotlight">
+        <div class="section-top">
+          <div>
+            <h2>Latest From Cracking the Cryptic</h2>
+            <p>The five newest uploads from the official YouTube channel, with their thumbnails and direct SudokuPad links whenever the description includes one.</p>
+          </div>
+          <a class="section-link" href="https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer">Official upload feed</a>
+        </div>
+        <div class="video-grid">
+          ${renderCtcVideoCards(ctcVideos)}
+        </div>
+      </section>
+
+      <section class="facts">
         <div class="fact">
           <strong>What stays compatible</strong>
           <div class="mini">Short IDs like <code>/94Qq6qGjh2</code>, <code>/sudoku/94Qq6qGjh2</code>, and SudokuPad URLs with the puzzle embedded all resolve through the same upstream puzzle data.</div>
@@ -806,6 +1228,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", origin);
     const { pathname } = url;
     const preferredOrigin = getPreferredAppOrigin(origin);
+    const latestCtcVideos = req.method === "GET" && pathname === "/" ? await fetchLatestCtcVideos(5).catch(() => []) : [];
 
     if (req.method === "GET" && shouldRedirectToPublic(url, origin)) {
       const redirectUrl = new URL(url.pathname + url.search, preferredOrigin);
@@ -822,7 +1245,7 @@ const server = http.createServer(async (req, res) => {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store"
       });
-      res.end(renderHomePage(origin, preferredOrigin));
+      res.end(renderHomePage(origin, preferredOrigin, latestCtcVideos));
       return;
     }
 

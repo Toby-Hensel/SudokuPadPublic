@@ -7,10 +7,11 @@ const { chromium } = require("playwright");
 
 const port = Number(process.env.TEST_PORT || 3210);
 const host = process.env.TEST_HOST || "127.0.0.1";
-const serverUrl = `http://${host}:${port}`;
+const baseUrl = process.env.TEST_BASE_URL || `http://${host}:${port}`;
 const puzzleId = process.env.TEST_PUZZLE_ID || "94Qq6qGjh2";
 const roomId = `sync-${Date.now()}`;
 const browserPath = process.env.BROWSER_PATH || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+const maxSyncMs = Number(process.env.MAX_SYNC_MS || 2_000);
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -43,26 +44,31 @@ async function dismissStartPuzzle(page) {
 }
 
 async function main() {
-  const server = spawn(process.execPath, ["server.mjs"], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      HOST: host
-    },
-    stdio: ["ignore", "pipe", "pipe"]
-  });
+  const shouldStartLocalServer = !process.env.TEST_BASE_URL;
+  const server = shouldStartLocalServer
+    ? spawn(process.execPath, ["server.mjs"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: host
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    })
+    : null;
 
   let serverOutput = "";
-  server.stdout.on("data", (chunk) => {
+  server?.stdout.on("data", (chunk) => {
     serverOutput += chunk.toString();
   });
-  server.stderr.on("data", (chunk) => {
+  server?.stderr.on("data", (chunk) => {
     serverOutput += chunk.toString();
   });
 
   try {
-    await waitForServer(serverUrl);
+    if (shouldStartLocalServer) {
+      await waitForServer(baseUrl);
+    }
 
     const browser = await chromium.launch({
       headless: true,
@@ -75,7 +81,7 @@ async function main() {
       });
       const pageA = await context.newPage();
       const pageB = await context.newPage();
-      const url = `${serverUrl}/${puzzleId}?room=${roomId}`;
+      const url = `${baseUrl}/${puzzleId}?room=${roomId}`;
 
       await Promise.all([
         pageA.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 }),
@@ -98,6 +104,7 @@ async function main() {
       }
 
       await pageA.mouse.click(box.x + 40, box.y + 40);
+      const syncStartedAt = Date.now();
       await pageA.keyboard.press("5");
 
       await pageB.waitForFunction(
@@ -107,6 +114,11 @@ async function main() {
         },
         { timeout: 10_000 }
       );
+      const syncMs = Date.now() - syncStartedAt;
+
+      if (syncMs > maxSyncMs) {
+        throw new Error(`Two-tab sync exceeded ${maxSyncMs}ms (actual ${syncMs}ms).`);
+      }
 
       const result = await Promise.all([
         pageA.evaluate(() => ({
@@ -119,7 +131,7 @@ async function main() {
         }))
       ]);
 
-      console.log(JSON.stringify({ serverUrl, roomId, pageA: result[0], pageB: result[1] }, null, 2));
+      console.log(JSON.stringify({ baseUrl, roomId, syncMs, pageA: result[0], pageB: result[1] }, null, 2));
     } finally {
       await browser.close();
     }
@@ -130,7 +142,7 @@ async function main() {
     }
     throw error;
   } finally {
-    server.kill("SIGTERM");
+    server?.kill("SIGTERM");
   }
 }
 

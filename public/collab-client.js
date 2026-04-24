@@ -15,6 +15,9 @@
 
   const clientIdKey = `collab-client-id:${roomId}`;
   const nameKey = "collab-display-name";
+  const immediateBroadcastDelayMs = 45;
+  const fallbackBroadcastDelayMs = 120;
+  const syncMonitorIntervalMs = 250;
 
   const state = {
     roomId,
@@ -273,9 +276,9 @@
     };
   }
 
-  function scheduleBroadcast() {
+  function scheduleBroadcast(delayMs = immediateBroadcastDelayMs) {
     window.clearTimeout(state.broadcastTimer);
-    state.broadcastTimer = window.setTimeout(pushLocalReplay, 180);
+    state.broadcastTimer = window.setTimeout(pushLocalReplay, delayMs);
   }
 
   function markStreamActivity() {
@@ -346,9 +349,9 @@
       const replay = getReplayPayload();
       const hash = getReplayHash(replay);
       if (hash !== state.lastSentHash && hash !== state.inFlightHash) {
-        scheduleBroadcast();
+        scheduleBroadcast(fallbackBroadcastDelayMs);
       }
-    }, 750);
+    }, syncMonitorIntervalMs);
   }
 
   function startRealtime() {

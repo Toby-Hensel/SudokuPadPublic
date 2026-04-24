@@ -130,7 +130,8 @@ async function fetchLatestCtcVideos(limit = 5) {
   return videos;
 }
 
-function renderCtcVideoCards(videos) {
+function renderCtcVideoCards(videos, options = {}) {
+  const compact = options.compact === true;
   if (!videos.length) {
     return `
       <div class="ctc-empty">
@@ -141,7 +142,7 @@ function renderCtcVideoCards(videos) {
   }
 
   return videos.map((video) => `
-    <article class="video-card">
+    <article class="video-card${compact ? " video-card--compact" : ""}">
       <a class="video-card__thumb" href="${escapeHtml(video.youtubeUrl)}" target="_blank" rel="noreferrer">
         <img src="${escapeHtml(video.thumbnailUrl)}" alt="${escapeHtml(video.title)} thumbnail" loading="lazy">
       </a>
@@ -558,6 +559,18 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         line-height: 1.6;
       }
 
+      .hero-copy__top {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: end;
+        flex-wrap: wrap;
+      }
+
+      .hero-copy__top h1 {
+        margin-bottom: 10px;
+      }
+
       .hero-grid {
         margin-top: 28px;
         display: grid;
@@ -747,6 +760,30 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         border-radius: 22px;
       }
 
+      .hero-feed {
+        margin-top: 28px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .video-card--compact {
+        display: grid;
+        grid-template-columns: 168px minmax(0, 1fr);
+      }
+
+      .video-card--compact .video-card__thumb {
+        height: 100%;
+      }
+
+      .video-card--compact .video-card__body {
+        padding: 16px 18px;
+      }
+
+      .video-card--compact .video-card__actions {
+        grid-template-columns: repeat(2, minmax(0, max-content));
+        align-items: center;
+      }
+
       .video-card__thumb {
         display: block;
         aspect-ratio: 16 / 9;
@@ -887,6 +924,14 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         .video-grid {
           grid-template-columns: 1fr;
         }
+
+        .video-card--compact {
+          grid-template-columns: 1fr;
+        }
+
+        .video-card--compact .video-card__actions {
+          grid-template-columns: 1fr;
+        }
       }
 
       @media (max-width: 640px) {
@@ -926,29 +971,17 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
 
         <div class="hero">
           <div class="hero-copy">
-            <h1>Launch one link, solve together, keep the puzzle page pristine.</h1>
-            <p class="lede">
-              Paste any SudokuPad URL or short ID and this launcher creates a shared room without changing the underlying SudokuPad experience.
-              The board page stays familiar. The coordination gets much easier.
-            </p>
-            <p class="lede">
-              ${origin !== preferredOrigin
-                ? `This local launcher is currently set to create collaboration links on <code>${escapeHtml(preferredOrigin)}</code> so solvers on different networks still land in the same room.`
-                : `You are already on the public collaboration host, so the links you create here are ready to share across different networks immediately.`}
-            </p>
-            <div class="hero-grid">
-              <div class="hero-stat">
-                <strong>Zero puzzle-page redesign</strong>
-                <span>The actual SudokuPad solve page stays visually identical unless you ask to change it.</span>
+            <div class="hero-copy__top">
+              <div>
+                <h1>Latest Cracking the Cryptic puzzle links.</h1>
+                <p class="lede">
+                  The newest five official uploads that include a SudokuPad link are now right at the top. Each one opens a fresh collaboration room immediately.
+                </p>
               </div>
-              <div class="hero-stat">
-                <strong>Built for sharing</strong>
-                <span>Private room names, copyable public links, and shared puzzle-room links are all one click away.</span>
-              </div>
-              <div class="hero-stat">
-                <strong>CTC-ready launcher</strong>
-                <span>The latest Cracking the Cryptic uploads with puzzle links are surfaced below so you can jump straight in.</span>
-              </div>
+              <a class="section-link" href="https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer">Official upload feed</a>
+            </div>
+            <div class="hero-feed">
+              ${renderCtcVideoCards(ctcVideos, { compact: true })}
             </div>
           </div>
 
@@ -980,19 +1013,6 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
               </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section class="spotlight">
-        <div class="section-top">
-          <div>
-            <h2>Latest Puzzle Videos From Cracking the Cryptic</h2>
-            <p>The newest five uploads from the official channel that actually include a SudokuPad puzzle link, with thumbnails plus one-click room creation.</p>
-          </div>
-          <a class="section-link" href="https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer">Official upload feed</a>
-        </div>
-        <div class="video-grid">
-          ${renderCtcVideoCards(ctcVideos)}
         </div>
       </section>
 

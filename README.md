@@ -57,6 +57,33 @@ Important:
 - if you rename the service or use a custom domain, update `WARM_TARGET_URL`
 - the stronger long-term fix is upgrading the web service itself from `Free` to `Starter`, which avoids free-tier sleep entirely
 
+### Better camera and microphone reliability
+
+The app now supports real TURN relays for WebRTC.
+
+If you want the best chance of camera/audio working across different networks, add these environment variables to the Render web service:
+
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_TURN_TTL`
+- `TWILIO_TURN_REGION` (optional)
+
+How it works:
+
+- if those Twilio credentials are present, the server fetches short-lived TURN credentials and gives them to the browser when someone joins AV
+- if they are not present, the app falls back to the built-in ICE list, which is still okay for local testing and some public sessions
+
+Recommended starting values:
+
+- `TWILIO_TURN_TTL=3600`
+- leave `TWILIO_TURN_REGION` blank unless you specifically want to pin Twilio to one region
+
+After adding them in Render:
+
+1. Save the environment variables.
+2. Trigger a redeploy.
+3. Test the AV join flow again from two different networks.
+
 ### Files added for public hosting
 
 - `render.yaml`

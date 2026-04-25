@@ -17,7 +17,7 @@ const ctcFeedUrl = process.env.CTC_FEED_URL || "https://www.youtube.com/feeds/vi
 const defaultIceServers = [
   { urls: ["stun:stun.l.google.com:19302"] }
 ];
-const iceServers = (() => {
+const configuredIceServers = (() => {
   try {
     const parsed = JSON.parse(process.env.COLLAB_ICE_SERVERS_JSON || "");
     return Array.isArray(parsed) && parsed.length > 0 ? parsed : defaultIceServers;
@@ -25,7 +25,16 @@ const iceServers = (() => {
     return defaultIceServers;
   }
 })();
+const twilioAccountSid = String(process.env.TWILIO_ACCOUNT_SID || "").trim();
+const twilioAuthToken = String(process.env.TWILIO_AUTH_TOKEN || "").trim();
+const twilioTurnTtl = Math.min(86_400, Math.max(600, Number(process.env.TWILIO_TURN_TTL || 3600) || 3600));
+const twilioTurnRegion = String(process.env.TWILIO_TURN_REGION || "").trim().toLowerCase();
 const rooms = new Map();
+const iceServerCache = {
+  expiresAt: 0,
+  iceServers: configuredIceServers,
+  source: "static"
+};
 const ctcFeedCache = {
   expiresAt: 0,
   videos: [],
@@ -70,6 +79,68 @@ function getRoomPuzzleId(room) {
 
   const replayPuzzleId = normalizePuzzleId(room?.latest?.replay?.puzzleId || room?.latest?.puzzleId || "");
   return isLookupSafePuzzleId(replayPuzzleId) ? replayPuzzleId : "";
+}
+
+function hasTwilioTurnConfig() {
+  return Boolean(twilioAccountSid && twilioAuthToken);
+}
+
+function applyTwilioRegion(servers) {
+  if (!twilioTurnRegion) {
+    return servers;
+  }
+
+  return servers.map((server) => {
+    const urls = Array.isArray(server?.urls) ? server.urls : [server?.urls].filter(Boolean);
+    return {
+      ...server,
+      urls: urls.map((url) => String(url).replace(/\bglobal(?=\.(?:stun|turn)\.twilio\.com)/g, twilioTurnRegion))
+    };
+  });
+}
+
+async function getRuntimeIceServers() {
+  if (!hasTwilioTurnConfig()) {
+    return {
+      iceServers: configuredIceServers,
+      source: "static"
+    };
+  }
+
+  if (Date.now() < iceServerCache.expiresAt && Array.isArray(iceServerCache.iceServers) && iceServerCache.iceServers.length > 0) {
+    return {
+      iceServers: iceServerCache.iceServers,
+      source: iceServerCache.source
+    };
+  }
+
+  const auth = Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString("base64");
+  const body = new URLSearchParams({
+    Ttl: String(twilioTurnTtl)
+  });
+  const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(twilioAccountSid)}/Tokens.json`, {
+    method: "POST",
+    headers: {
+      authorization: `Basic ${auth}`,
+      "content-type": "application/x-www-form-urlencoded; charset=utf-8"
+    },
+    body
+  });
+
+  if (!response.ok) {
+    throw new Error(`Twilio TURN token request failed with ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const iceServers = applyTwilioRegion(Array.isArray(payload.ice_servers) && payload.ice_servers.length > 0 ? payload.ice_servers : configuredIceServers);
+  iceServerCache.iceServers = iceServers;
+  iceServerCache.source = "twilio";
+  iceServerCache.expiresAt = Date.now() + Math.max(60_000, (twilioTurnTtl - 120) * 1000);
+
+  return {
+    iceServers,
+    source: "twilio"
+  };
 }
 
 function escapeHtml(value) {
@@ -439,7 +510,7 @@ async function servePublicAsset(res, pathname) {
 
 function injectCollabAssets(html) {
   const headTag = `<link rel="stylesheet" href="/assets/collab-client.css?v=${assetVersion}">`;
-  const configTag = `<script>window.__COLLAB_PUBLIC_ORIGIN__=${JSON.stringify(publicAppOrigin)};window.__COLLAB_ICE_SERVERS__=${JSON.stringify(iceServers)};</script>`;
+  const configTag = `<script>window.__COLLAB_PUBLIC_ORIGIN__=${JSON.stringify(publicAppOrigin)};window.__COLLAB_ICE_SERVERS__=${JSON.stringify(configuredIceServers)};</script>`;
   const scriptTag = `<script src="/assets/collab-client.js?v=${assetVersion}" defer></script>`;
   return html
     .replace("</head>", `${headTag}\n${configTag}\n</head>`)
@@ -1449,6 +1520,19 @@ async function handleSync(res, url) {
   });
 }
 
+async function handleIceServers(res) {
+  try {
+    const payload = await getRuntimeIceServers();
+    sendJson(res, 200, payload);
+  } catch (error) {
+    console.error("ICE server lookup failed:", error);
+    sendJson(res, 200, {
+      iceServers: configuredIceServers,
+      source: "static-fallback"
+    });
+  }
+}
+
 async function handleUpdate(req, res, url) {
   const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "default");
   const room = getRoom(roomId);
@@ -1562,6 +1646,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && pathname.startsWith("/api/collab/stream/")) {
       handleSse(req, res, url);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/collab/ice") {
+      await handleIceServers(res);
       return;
     }
 

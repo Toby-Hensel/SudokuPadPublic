@@ -8,7 +8,7 @@
       return window.location.origin;
     }
   })();
-  const iceServers = Array.isArray(window.__COLLAB_ICE_SERVERS__) && window.__COLLAB_ICE_SERVERS__.length > 0
+  const fallbackIceServers = Array.isArray(window.__COLLAB_ICE_SERVERS__) && window.__COLLAB_ICE_SERVERS__.length > 0
     ? window.__COLLAB_ICE_SERVERS__
     : [{ urls: ["stun:stun.l.google.com:19302"] }];
 
@@ -63,6 +63,8 @@
     mediaBusy: false,
     micEnabled: true,
     cameraEnabled: true,
+    iceServers: fallbackIceServers,
+    iceServersFetchedAt: 0,
     peerConnections: new Map(),
     remoteTiles: new Map(),
     dragPointerId: null,
@@ -512,6 +514,48 @@
     );
   }
 
+  async function fetchRuntimeIceServers(force = false) {
+    const cacheFreshForMs = 20 * 60 * 1000;
+    if (!force && state.iceServersFetchedAt && Date.now() - state.iceServersFetchedAt < cacheFreshForMs) {
+      return state.iceServers;
+    }
+
+    try {
+      const response = await fetch("/api/collab/ice", {
+        headers: {
+          "cache-control": "no-store"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`ICE lookup failed with ${response.status}`);
+      }
+
+      const payload = await response.json();
+      if (Array.isArray(payload.iceServers) && payload.iceServers.length > 0) {
+        state.iceServers = payload.iceServers;
+        state.iceServersFetchedAt = Date.now();
+      }
+    } catch (error) {
+      console.error("Runtime ICE fetch failed:", error);
+      if (!Array.isArray(state.iceServers) || state.iceServers.length === 0) {
+        state.iceServers = fallbackIceServers;
+      }
+    }
+
+    return state.iceServers;
+  }
+
+  function applyIceServers(entry) {
+    try {
+      entry.pc.setConfiguration({
+        iceServers: state.iceServers
+      });
+    } catch (error) {
+      console.error("Applying ICE servers failed:", error);
+    }
+  }
+
   function getPeerLabel(peerId) {
     const peer = state.peers.find((candidate) => candidate.clientId === peerId);
     return peer?.clientId === state.clientId ? `${peer.name} (you)` : (peer?.name || `Solver ${peerId.slice(0, 4)}`);
@@ -548,7 +592,10 @@
 
     entry.restartInFlight = true;
     if (shouldOfferTo(peerId)) {
-      negotiateWithPeer(peerId, { iceRestart: true }).catch((error) => {
+      fetchRuntimeIceServers(true).then(() => {
+        applyIceServers(entry);
+        return negotiateWithPeer(peerId, { iceRestart: true });
+      }).catch((error) => {
         console.error("ICE restart failed:", error);
         entry.restartInFlight = false;
       });
@@ -730,11 +777,12 @@
 
     let entry = state.peerConnections.get(peerId);
     if (entry) {
+      applyIceServers(entry);
       syncPeerConnectionTracks(entry);
       return entry;
     }
 
-    const pc = new RTCPeerConnection({ iceServers });
+    const pc = new RTCPeerConnection({ iceServers: state.iceServers });
     entry = {
       pc,
       remoteStream: new MediaStream(),
@@ -743,6 +791,7 @@
       restartInFlight: false
     };
     state.peerConnections.set(peerId, entry);
+    applyIceServers(entry);
     syncPeerConnectionTracks(entry);
 
     pc.onicecandidate = (event) => {
@@ -916,10 +965,13 @@
     updateMediaControls();
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: true
-      });
+      const [, stream] = await Promise.all([
+        fetchRuntimeIceServers(true),
+        navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: true
+        })
+      ]);
       state.localStream = stream;
       state.micEnabled = true;
       state.cameraEnabled = true;

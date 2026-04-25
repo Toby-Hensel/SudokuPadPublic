@@ -6,6 +6,15 @@ services:
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeployTrigger: commit
+    envVars:
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_TURN_TTL
+        value: "3600"
+      - key: TWILIO_TURN_REGION
+        sync: false
   - type: cron
     name: sudokupad-party-keep-warm
     runtime: node

@@ -517,6 +517,50 @@
     return peer?.clientId === state.clientId ? `${peer.name} (you)` : (peer?.name || `Solver ${peerId.slice(0, 4)}`);
   }
 
+  function ensureVideoPlayback(video) {
+    if (!video) {
+      return;
+    }
+
+    const playPromise = video.play?.();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+  }
+
+  function attachStreamToVideo(video, stream, { muted = false } = {}) {
+    if (!video) {
+      return;
+    }
+
+    video.muted = muted;
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+    }
+    ensureVideoPlayback(video);
+  }
+
+  function requestIceRecovery(peerId, reason = "restart-request") {
+    const entry = state.peerConnections.get(peerId);
+    if (!entry || entry.restartInFlight) {
+      return;
+    }
+
+    entry.restartInFlight = true;
+    if (shouldOfferTo(peerId)) {
+      negotiateWithPeer(peerId, { iceRestart: true }).catch((error) => {
+        console.error("ICE restart failed:", error);
+        entry.restartInFlight = false;
+      });
+      return;
+    }
+
+    sendCallSignal(peerId, "restart-request", { reason }).catch((error) => {
+      console.error("ICE restart request failed:", error);
+      entry.restartInFlight = false;
+    });
+  }
+
   function ensureRemoteTile(peerId) {
     let tile = state.remoteTiles.get(peerId);
     if (tile) {
@@ -530,6 +574,12 @@
     video.className = "collab-media-panel__video";
     video.autoplay = true;
     video.playsInline = true;
+    video.addEventListener("loadedmetadata", () => {
+      ensureVideoPlayback(video);
+    });
+    video.addEventListener("canplay", () => {
+      ensureVideoPlayback(video);
+    });
     card.appendChild(video);
 
     const label = document.createElement("div");
@@ -561,9 +611,7 @@
 
   function renderRemoteMedia() {
     if (state.localStream) {
-      if (ui.localVideo.srcObject !== state.localStream) {
-        ui.localVideo.srcObject = state.localStream;
-      }
+      attachStreamToVideo(ui.localVideo, state.localStream, { muted: true });
       ui.localVideoCard.classList.remove("collab-media-panel__card--hidden");
     } else {
       if (ui.localVideo.srcObject) {
@@ -580,9 +628,7 @@
 
       activePeerIds.add(peerId);
       const tile = ensureRemoteTile(peerId);
-      if (tile.video.srcObject !== entry.remoteStream) {
-        tile.video.srcObject = entry.remoteStream;
-      }
+      attachStreamToVideo(tile.video, entry.remoteStream);
       tile.label.textContent = getPeerLabel(peerId);
     }
 
@@ -633,6 +679,7 @@
     entry.pc.ontrack = null;
     entry.pc.onicecandidate = null;
     entry.pc.onconnectionstatechange = null;
+    entry.pc.oniceconnectionstatechange = null;
     entry.pc.close();
     state.peerConnections.delete(peerId);
     removeRemoteTile(peerId);
@@ -692,7 +739,8 @@
       pc,
       remoteStream: new MediaStream(),
       pendingCandidates: [],
-      recvOnlyReady: false
+      recvOnlyReady: false,
+      restartInFlight: false
     };
     state.peerConnections.set(peerId, entry);
     syncPeerConnectionTracks(entry);
@@ -708,18 +756,47 @@
     };
 
     pc.ontrack = (event) => {
-      event.streams[0]?.getTracks().forEach((track) => {
-        if (!entry.remoteStream.getTracks().some((candidate) => candidate.id === track.id)) {
-          entry.remoteStream.addTrack(track);
-        }
-      });
+      const track = event.track;
+      if (track && !entry.remoteStream.getTracks().some((candidate) => candidate.id === track.id)) {
+        entry.remoteStream.addTrack(track);
+      }
+      if (track) {
+        track.onunmute = () => {
+          renderRemoteMedia();
+          updateMediaControls();
+        };
+        track.onended = () => {
+          renderRemoteMedia();
+          updateMediaControls();
+        };
+      }
       renderRemoteMedia();
       updateMediaControls();
     };
 
     pc.onconnectionstatechange = () => {
-      if (["failed", "closed"].includes(pc.connectionState)) {
+      if (["connected"].includes(pc.connectionState)) {
+        entry.restartInFlight = false;
+        renderRemoteMedia();
+        updateMediaControls();
+        return;
+      }
+
+      if (["closed"].includes(pc.connectionState)) {
         closePeerConnection(peerId);
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (["connected", "completed"].includes(pc.iceConnectionState)) {
+        entry.restartInFlight = false;
+        renderRemoteMedia();
+        updateMediaControls();
+        return;
+      }
+
+      if (["disconnected", "failed"].includes(pc.iceConnectionState)) {
+        requestIceRecovery(peerId, pc.iceConnectionState);
       }
     };
 
@@ -752,17 +829,18 @@
     }
   }
 
-  async function negotiateWithPeer(peerId) {
+  async function negotiateWithPeer(peerId, options = {}) {
     const entry = ensurePeerConnection(peerId);
     if (!entry || !shouldOfferTo(peerId)) {
       return;
     }
 
     try {
-      const offer = await entry.pc.createOffer();
+      const offer = await entry.pc.createOffer(options.iceRestart ? { iceRestart: true } : undefined);
       await entry.pc.setLocalDescription(offer);
       await sendCallSignal(peerId, "offer", entry.pc.localDescription.toJSON());
     } catch (error) {
+      entry.restartInFlight = false;
       console.error("Offer creation failed:", error);
     }
   }
@@ -785,6 +863,13 @@
       return;
     }
 
+    if (message.signalType === "restart-request") {
+      if (shouldOfferTo(peerId)) {
+        await negotiateWithPeer(peerId, { iceRestart: true });
+      }
+      return;
+    }
+
     const entry = ensurePeerConnection(peerId);
     if (!entry) {
       return;
@@ -803,6 +888,7 @@
     if (message.signalType === "answer") {
       await entry.pc.setRemoteDescription(new RTCSessionDescription(message.payload));
       await flushPendingCandidates(entry);
+      entry.restartInFlight = false;
       return;
     }
 

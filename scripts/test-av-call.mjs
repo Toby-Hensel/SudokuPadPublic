@@ -109,15 +109,41 @@ async function main() {
       await pageB.getByRole("button", { name: "Join AV" }).click();
 
       await Promise.all([
-        pageA.waitForFunction(() => document.querySelectorAll(".collab-media-panel__remote-grid .collab-media-panel__video").length >= 1, { timeout: 20_000 }),
-        pageB.waitForFunction(() => document.querySelectorAll(".collab-media-panel__remote-grid .collab-media-panel__video").length >= 1, { timeout: 20_000 })
+        pageA.waitForFunction(() => {
+          const videos = [...document.querySelectorAll(".collab-media-panel__remote-grid .collab-media-panel__video")];
+          return videos.length >= 1 && videos.every((video) => {
+            const stream = video.srcObject;
+            const videoTracks = stream?.getVideoTracks?.() || [];
+            const audioTracks = stream?.getAudioTracks?.() || [];
+            return Boolean(stream) &&
+              video.readyState >= 2 &&
+              video.videoWidth > 0 &&
+              videoTracks.some((track) => track.readyState === "live") &&
+              audioTracks.some((track) => track.readyState === "live");
+          });
+        }, { timeout: 20_000 }),
+        pageB.waitForFunction(() => {
+          const videos = [...document.querySelectorAll(".collab-media-panel__remote-grid .collab-media-panel__video")];
+          return videos.length >= 1 && videos.every((video) => {
+            const stream = video.srcObject;
+            const videoTracks = stream?.getVideoTracks?.() || [];
+            const audioTracks = stream?.getAudioTracks?.() || [];
+            return Boolean(stream) &&
+              video.readyState >= 2 &&
+              video.videoWidth > 0 &&
+              videoTracks.some((track) => track.readyState === "live") &&
+              audioTracks.some((track) => track.readyState === "live");
+          });
+        }, { timeout: 20_000 })
       ]);
 
       console.log(JSON.stringify({
         aStatus: await pageA.locator(".collab-dock__media-status").textContent(),
         bStatus: await pageB.locator(".collab-dock__media-status").textContent(),
         aRemote: await pageA.locator(".collab-media-panel__remote-grid .collab-media-panel__video").count(),
-        bRemote: await pageB.locator(".collab-media-panel__remote-grid .collab-media-panel__video").count()
+        bRemote: await pageB.locator(".collab-media-panel__remote-grid .collab-media-panel__video").count(),
+        aRemoteWidth: await pageA.locator(".collab-media-panel__remote-grid .collab-media-panel__video").first().evaluate((video) => video.videoWidth),
+        bRemoteWidth: await pageB.locator(".collab-media-panel__remote-grid .collab-media-panel__video").first().evaluate((video) => video.videoWidth)
       }, null, 2));
 
       await Promise.all([

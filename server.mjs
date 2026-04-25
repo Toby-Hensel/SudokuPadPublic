@@ -343,6 +343,7 @@ function getRoom(roomId) {
       roomId,
       puzzleId: null,
       latest: null,
+      highlights: new Map(),
       clients: new Map(),
       hostClientId: null,
       controllerClientId: null,
@@ -423,6 +424,31 @@ function canClientEdit(room, clientId) {
   }
 
   return Boolean(clientId) && room.controllerClientId === clientId;
+}
+
+function getHighlightPayloads(room) {
+  const cutoff = Date.now() - 4_000;
+  const activeClientIds = new Set(activePeers(room).map((peer) => peer.clientId));
+  const payloads = [];
+
+  for (const [clientId, highlight] of room.highlights.entries()) {
+    if (!highlight || highlight.updatedAt < cutoff || !activeClientIds.has(clientId)) {
+      room.highlights.delete(clientId);
+      continue;
+    }
+
+    payloads.push({
+      clientId,
+      name: highlight.name,
+      row: highlight.row,
+      col: highlight.col,
+      rows: highlight.rows,
+      cols: highlight.cols,
+      updatedAt: highlight.updatedAt
+    });
+  }
+
+  return payloads.sort((left, right) => left.updatedAt - right.updatedAt);
 }
 
 function presencePayload(room) {
@@ -1590,7 +1616,8 @@ async function handleSync(res, url) {
     roomId,
     puzzleId: room.puzzleId || room.latest?.puzzleId || room.latest?.replay?.puzzleId || null,
     snapshot: room.latest,
-    presence
+    presence,
+    highlights: getHighlightPayloads(room)
   });
 }
 
@@ -1666,6 +1693,48 @@ async function handleUpdate(req, res, url) {
     revision: room.latest.revision,
     hash: room.latest.hash,
     control: buildControlPayload(room)
+  });
+}
+
+async function handleHighlight(req, res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "default");
+  const room = getRoom(roomId);
+  const body = await readJsonBody(req);
+  const clientId = sanitizeRoomId(body.clientId, "");
+  const row = Number(body.row);
+  const col = Number(body.col);
+  const rows = Math.max(1, Math.min(64, Number(body.rows) || 9));
+  const cols = Math.max(1, Math.min(64, Number(body.cols) || 9));
+
+  if (!canClientEdit(room, clientId)) {
+    sendJson(res, 403, {
+      error: "Only an active editor can broadcast highlights.",
+      control: buildControlPayload(room)
+    });
+    return;
+  }
+
+  if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || row >= rows || col < 0 || col >= cols) {
+    sendJson(res, 400, { error: "Invalid highlight coordinates." });
+    return;
+  }
+
+  const highlight = {
+    clientId,
+    name: String(body.name || "").trim().slice(0, 48),
+    row,
+    col,
+    rows,
+    cols,
+    updatedAt: Date.now()
+  };
+
+  room.highlights.set(clientId, highlight);
+  room.updatedAt = Date.now();
+  broadcast(room, "highlight", highlight);
+  sendJson(res, 200, {
+    ok: true,
+    highlight
   });
 }
 
@@ -1827,6 +1896,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname.startsWith("/api/collab/control/")) {
       await handleRoomControl(req, res, url);
+      return;
+    }
+
+    if (req.method === "POST" && pathname.startsWith("/api/collab/highlight/")) {
+      await handleHighlight(req, res, url);
       return;
     }
 

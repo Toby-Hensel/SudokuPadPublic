@@ -66,6 +66,8 @@
       freeForAll: false,
       accessRequests: []
     },
+    lastHighlightAt: 0,
+    remoteHighlights: new Map(),
     localStream: null,
     mediaEnabled: false,
     mediaBusy: false,
@@ -106,6 +108,8 @@
   setMediaPanelMinimized(localStorage.getItem(mediaPanelMinimizedKey) === "1");
   renderRoomControl();
   updateMediaControls();
+  window.addEventListener("resize", renderRemoteHighlights);
+  window.addEventListener("scroll", renderRemoteHighlights, true);
 
   ui.copyButton.addEventListener("click", async () => {
     await navigator.clipboard.writeText(inviteLink);
@@ -208,6 +212,8 @@
     endDockDrag();
     endMediaPanelDrag();
     window.removeEventListener("keydown", handleReadOnlyKeydown, true);
+    window.removeEventListener("resize", renderRemoteHighlights);
+    window.removeEventListener("scroll", renderRemoteHighlights, true);
   });
 
   function createUi() {
@@ -291,6 +297,10 @@
     `;
     document.body.appendChild(readOnlyOverlay);
 
+    const highlightLayer = document.createElement("div");
+    highlightLayer.className = "collab-highlight-layer";
+    document.body.appendChild(highlightLayer);
+
     const inviteActions = dock.querySelectorAll(".collab-dock__actions")[0];
     const controlActions = dock.querySelector(".collab-dock__actions--control");
     const mediaActions = dock.querySelector(".collab-dock__actions--media");
@@ -321,7 +331,8 @@
       localVideo: mediaPanel.querySelector(".collab-media-panel__video--local"),
       remoteMedia: mediaPanel.querySelector(".collab-media-panel__remote-grid"),
       readOnlyOverlay,
-      readOnlyMessage: readOnlyOverlay.querySelector(".collab-readonly__message")
+      readOnlyMessage: readOnlyOverlay.querySelector(".collab-readonly__message"),
+      highlightLayer
     };
   }
 
@@ -754,6 +765,128 @@
     if (event.key.length === 1 || blockedKeys.has(event.key)) {
       event.preventDefault();
       event.stopPropagation();
+    }
+  }
+
+  function getBoardRect() {
+    const board = document.querySelector("#svgrenderer");
+    return board instanceof Element ? board.getBoundingClientRect() : null;
+  }
+
+  function getBoardDimensions() {
+    const replay = getReplayPayload();
+    return {
+      rows: Math.max(1, Number(replay.rows) || 9),
+      cols: Math.max(1, Number(replay.cols) || 9)
+    };
+  }
+
+  function pruneRemoteHighlights() {
+    const cutoff = Date.now() - 4_000;
+    for (const [clientId, highlight] of state.remoteHighlights.entries()) {
+      if (!highlight || highlight.updatedAt < cutoff) {
+        state.remoteHighlights.delete(clientId);
+      }
+    }
+  }
+
+  function renderRemoteHighlights() {
+    pruneRemoteHighlights();
+    ui.highlightLayer.innerHTML = "";
+
+    const boardRect = getBoardRect();
+    if (!boardRect || boardRect.width <= 0 || boardRect.height <= 0) {
+      return;
+    }
+
+    for (const highlight of state.remoteHighlights.values()) {
+      const cellWidth = boardRect.width / Math.max(1, highlight.cols || 9);
+      const cellHeight = boardRect.height / Math.max(1, highlight.rows || 9);
+      const marker = document.createElement("div");
+      marker.className = "collab-remote-highlight";
+      marker.dataset.row = String(highlight.row);
+      marker.dataset.col = String(highlight.col);
+      marker.style.left = `${boardRect.left + cellWidth * highlight.col}px`;
+      marker.style.top = `${boardRect.top + cellHeight * highlight.row}px`;
+      marker.style.width = `${cellWidth}px`;
+      marker.style.height = `${cellHeight}px`;
+      marker.innerHTML = `<span class="collab-remote-highlight__label">${highlight.name || "Controller"}</span>`;
+      ui.highlightLayer.appendChild(marker);
+    }
+  }
+
+  function applyHighlight(highlight) {
+    if (!highlight || highlight.clientId === state.clientId) {
+      return;
+    }
+
+    const normalized = {
+      clientId: String(highlight.clientId),
+      name: String(highlight.name || "").trim() || getPeerName(highlight.clientId),
+      row: Number(highlight.row),
+      col: Number(highlight.col),
+      rows: Math.max(1, Number(highlight.rows) || 9),
+      cols: Math.max(1, Number(highlight.cols) || 9),
+      updatedAt: Number(highlight.updatedAt) || Date.now()
+    };
+
+    if (!Number.isInteger(normalized.row) || !Number.isInteger(normalized.col)) {
+      return;
+    }
+
+    state.lastHighlightAt = Math.max(state.lastHighlightAt, normalized.updatedAt);
+    state.remoteHighlights.set(normalized.clientId, normalized);
+    renderRemoteHighlights();
+
+    window.setTimeout(() => {
+      const current = state.remoteHighlights.get(normalized.clientId);
+      if (current && current.updatedAt === normalized.updatedAt) {
+        state.remoteHighlights.delete(normalized.clientId);
+        renderRemoteHighlights();
+      }
+    }, 1800);
+  }
+
+  async function sendBoardHighlight(event) {
+    if (!canEditBoard() || state.applyingRemote) {
+      return;
+    }
+
+    const boardRect = getBoardRect();
+    if (!boardRect) {
+      return;
+    }
+
+    if (
+      event.clientX < boardRect.left ||
+      event.clientX > boardRect.right ||
+      event.clientY < boardRect.top ||
+      event.clientY > boardRect.bottom
+    ) {
+      return;
+    }
+
+    const { rows, cols } = getBoardDimensions();
+    const row = Math.max(0, Math.min(rows - 1, Math.floor(((event.clientY - boardRect.top) / boardRect.height) * rows)));
+    const col = Math.max(0, Math.min(cols - 1, Math.floor(((event.clientX - boardRect.left) / boardRect.width) * cols)));
+
+    try {
+      await fetch(`/api/collab/highlight/${encodeURIComponent(state.roomId)}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          clientId: state.clientId,
+          name: state.name,
+          row,
+          col,
+          rows,
+          cols
+        })
+      });
+    } catch (error) {
+      console.error("Highlight broadcast failed:", error);
     }
   }
 
@@ -1788,6 +1921,9 @@
     markStreamActivity();
     renderPresence(payload.presence);
     state.pollHealthy = true;
+    if (Array.isArray(payload.highlights)) {
+      payload.highlights.forEach(applyHighlight);
+    }
 
     if (payload.snapshot) {
           await applySnapshot(payload.snapshot, { force: true });
@@ -1822,6 +1958,9 @@
       markStreamActivity();
       renderPresence(payload.presence);
       state.pollHealthy = true;
+      if (Array.isArray(payload.highlights)) {
+        payload.highlights.forEach(applyHighlight);
+      }
 
       if (payload.snapshot) {
         await applySnapshot(payload.snapshot);
@@ -1903,6 +2042,15 @@
         console.error("Call signal parse failed:", error);
       }
     });
+
+    source.addEventListener("highlight", (event) => {
+      try {
+        markStreamActivity();
+        applyHighlight(JSON.parse(event.data));
+      } catch (error) {
+        console.error("Highlight parse failed:", error);
+      }
+    });
   }
 
   function patchProgressSaving() {
@@ -1928,6 +2076,12 @@
 
     if (puzzle.__collabActPatched) {
       return;
+    }
+
+    const board = document.querySelector("#svgrenderer");
+    if (!puzzle.__collabHighlightPatched && board instanceof Element) {
+      board.addEventListener("pointerdown", sendBoardHighlight, true);
+      puzzle.__collabHighlightPatched = true;
     }
 
     const original = puzzle.act.bind(puzzle);

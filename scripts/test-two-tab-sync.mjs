@@ -76,6 +76,20 @@ async function clickControlButton(page, name) {
   await page.getByRole("button", { name }).click({ force: true });
 }
 
+async function waitForRemoteHighlight(page, row, col, timeoutMs = 10_000) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const matches = await page.locator(`.collab-remote-highlight[data-row="${row}"][data-col="${col}"]`).count();
+    if (matches > 0) {
+      return Date.now() - startedAt;
+    }
+    await wait(100);
+  }
+
+  throw new Error(`Remote highlight ${row},${col} did not appear in time.`);
+}
+
 async function waitForReplaySync(pageA, pageB, previousActions, timeoutMs = 10_000) {
   const previousHash = JSON.stringify(normalizeReplayActions(previousActions));
   const startedAt = Date.now();
@@ -140,9 +154,11 @@ async function runScenario(browser, scenario) {
       const syncStartedAt = Date.now();
       const previousActions = await getReplayActions(pageA);
       await action.run(pageA, box);
-      const syncedActions = await waitForReplaySync(pageA, pageB, previousActions);
+      const syncedActions = action.waitForSync
+        ? await action.waitForSync(pageA, pageB, previousActions)
+        : await waitForReplaySync(pageA, pageB, previousActions);
 
-      const syncMs = Date.now() - syncStartedAt;
+      const syncMs = typeof syncedActions === "number" ? syncedActions : (Date.now() - syncStartedAt);
       if (syncMs > maxSyncMs) {
         throw new Error(`${scenario.label}:${action.label} exceeded ${maxSyncMs}ms (actual ${syncMs}ms).`);
       }
@@ -150,7 +166,7 @@ async function runScenario(browser, scenario) {
       metrics.push({
         label: action.label,
         syncMs,
-        actions: syncedActions
+        actions: Array.isArray(syncedActions) ? syncedActions : await getReplayActions(pageB)
       });
     }
 
@@ -208,6 +224,13 @@ async function main() {
           disableStream: false,
           actions: [
             {
+              label: "highlight",
+              run: async (page, box) => {
+                await page.mouse.click(box.x + 40, box.y + 40);
+              },
+              waitForSync: (pageA, pageB) => waitForRemoteHighlight(pageB, 0, 0)
+            },
+            {
               label: "digit",
               run: async (page, box) => {
                 await page.mouse.click(box.x + 40, box.y + 40);
@@ -248,6 +271,13 @@ async function main() {
           label: "poll-only",
           disableStream: true,
           actions: [
+            {
+              label: "highlight",
+              run: async (page, box) => {
+                await page.mouse.click(box.x + 40, box.y + 40);
+              },
+              waitForSync: (pageA, pageB) => waitForRemoteHighlight(pageB, 0, 0)
+            },
             {
               label: "digit",
               run: async (page, box) => {

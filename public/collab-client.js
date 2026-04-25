@@ -1146,6 +1146,25 @@
     });
   }
 
+  function isRemoteVideoStalled(peerId, entry) {
+    if (!entry?.remoteStream) {
+      return false;
+    }
+
+    const remoteVideoTrack = entry.remoteStream.getVideoTracks().find((track) => track.readyState === "live");
+    if (!remoteVideoTrack) {
+      return false;
+    }
+
+    const tile = state.remoteTiles.get(peerId);
+    const video = tile?.video;
+    if (!video) {
+      return true;
+    }
+
+    return video.readyState < 2 || video.videoWidth === 0;
+  }
+
   function handleReadOnlyKeydown(event) {
     if (state.applyingRemote || canEditBoard()) {
       return;
@@ -2247,9 +2266,12 @@
         const entry = state.peerConnections.get(peer.clientId);
         const hasLiveRemoteTracks = Boolean(entry?.remoteStream?.getTracks().some((track) => track.readyState === "live"));
         const isConnected = entry ? ["connected", "completed"].includes(entry.pc.iceConnectionState) : false;
+        const stalledVideo = isRemoteVideoStalled(peer.clientId, entry);
 
         if (!entry || !hasLiveRemoteTracks || !isConnected) {
           requestPeerMediaSync(peer.clientId, "mesh-monitor");
+        } else if (stalledVideo) {
+          requestPeerMediaSync(peer.clientId, "black-video");
         }
       }
     }, 3_000);

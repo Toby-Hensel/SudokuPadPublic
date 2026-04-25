@@ -1,8 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
+import https from "node:https";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -592,6 +594,69 @@ function injectCollabAssets(html) {
   return html
     .replace("</head>", `${headTag}\n${configTag}\n</head>`)
     .replace("</body>", `${scriptTag}\n</body>`);
+}
+
+function decodeUpstreamBody(body, contentEncoding) {
+  const encoding = String(contentEncoding || "").toLowerCase();
+  if (!encoding) {
+    return body;
+  }
+
+  try {
+    if (encoding.includes("br")) {
+      return brotliDecompressSync(body);
+    }
+    if (encoding.includes("gzip")) {
+      return gunzipSync(body);
+    }
+    if (encoding.includes("deflate")) {
+      return inflateSync(body);
+    }
+  } catch {
+    return body;
+  }
+
+  return body;
+}
+
+function fetchUpstream(url, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    const target = typeof url === "string" ? new URL(url) : url;
+    const transport = target.protocol === "https:" ? https : http;
+    const request = transport.request(target, {
+      method: "GET",
+      headers: {
+        "user-agent": "SudokuPad Party Proxy",
+        "accept-encoding": "br, gzip, deflate"
+      },
+      rejectUnauthorized: false
+    }, (response) => {
+      const statusCode = response.statusCode || 500;
+
+      if ([301, 302, 303, 307, 308].includes(statusCode) && response.headers.location && redirectCount < 5) {
+        response.resume();
+        resolve(fetchUpstream(new URL(response.headers.location, target), redirectCount + 1));
+        return;
+      }
+
+      const chunks = [];
+      response.on("data", (chunk) => {
+        chunks.push(chunk);
+      });
+      response.on("end", () => {
+        const body = decodeUpstreamBody(Buffer.concat(chunks), response.headers["content-encoding"]);
+        resolve({
+          statusCode,
+          headers: response.headers,
+          body
+        });
+      });
+      response.on("error", reject);
+    });
+
+    request.on("error", reject);
+    request.end();
+  });
 }
 
 function renderHomePage(origin, preferredOrigin, ctcVideos) {
@@ -1399,28 +1464,22 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
 
 async function proxyUpstream(req, res, url, { inject = false } = {}) {
   const upstreamUrl = new URL(url.pathname + url.search, upstreamOrigin);
-  const upstreamResponse = await fetch(upstreamUrl, {
-    method: req.method,
-    headers: {
-      "user-agent": "SudokuPad Party Proxy"
-    }
-  });
+  const upstreamResponse = await fetchUpstream(upstreamUrl);
 
   const headers = {
-    "cache-control": inject ? "no-store" : (upstreamResponse.headers.get("cache-control") || "public, max-age=300"),
-    "content-type": upstreamResponse.headers.get("content-type") || "application/octet-stream"
+    "cache-control": inject ? "no-store" : (String(upstreamResponse.headers["cache-control"] || "") || "public, max-age=300"),
+    "content-type": String(upstreamResponse.headers["content-type"] || "") || "application/octet-stream"
   };
 
-  res.writeHead(upstreamResponse.status, headers);
+  res.writeHead(upstreamResponse.statusCode, headers);
 
   if (inject) {
-    const html = await upstreamResponse.text();
+    const html = upstreamResponse.body.toString("utf8");
     res.end(injectCollabAssets(html));
     return;
   }
 
-  const body = Buffer.from(await upstreamResponse.arrayBuffer());
-  res.end(body);
+  res.end(upstreamResponse.body);
 }
 
 function handleSse(req, res, url) {

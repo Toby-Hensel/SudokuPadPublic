@@ -53,6 +53,7 @@
     healthTimer: null,
     syncTimer: null,
     snapshotTimer: null,
+    mediaMeshTimer: null,
     reconnectAttempts: 0,
     lastStreamEventAt: 0,
     lastLiveAt: 0,
@@ -85,6 +86,7 @@
         return [];
       }
     })(),
+    lastMediaRepairAt: new Map(),
     draggedRemotePeerId: null,
     dragPointerId: null,
     dragOffsetX: 0,
@@ -201,6 +203,9 @@
     }
     if (state.snapshotTimer) {
       window.clearInterval(state.snapshotTimer);
+    }
+    if (state.mediaMeshTimer) {
+      window.clearInterval(state.mediaMeshTimer);
     }
     if (state.reconnectTimer) {
       window.clearTimeout(state.reconnectTimer);
@@ -703,8 +708,24 @@
 
     if (state.localStream) {
       peers.forEach((peer) => {
-        if (peer.clientId !== state.clientId && shouldOfferTo(peer.clientId) && !state.peerConnections.has(peer.clientId)) {
-          negotiateWithPeer(peer.clientId);
+        if (peer.clientId === state.clientId || peer.mediaEnabled !== true) {
+          return;
+        }
+
+        const entry = state.peerConnections.get(peer.clientId);
+        const hasLiveRemoteTracks = Boolean(entry?.remoteStream?.getTracks().some((track) => track.readyState === "live"));
+        const isConnected = entry ? ["connected", "completed"].includes(entry.pc.iceConnectionState) : false;
+
+        if (!entry || (!hasLiveRemoteTracks && !isConnected)) {
+          if (shouldOfferTo(peer.clientId)) {
+            negotiateWithPeer(peer.clientId);
+          } else {
+            sendCallSignal(peer.clientId, "restart-request", {
+              reason: "presence-sync"
+            }).catch((error) => {
+              console.error("Presence restart request failed:", error);
+            });
+          }
         }
       });
     }
@@ -742,6 +763,33 @@
     } finally {
       renderRoomControl();
     }
+  }
+
+  function requestPeerMediaSync(peerId, reason = "repair") {
+    if (!peerId || peerId === state.clientId || !state.localStream) {
+      return;
+    }
+
+    const peer = state.peers.find((candidate) => candidate.clientId === peerId);
+    if (!peer || peer.mediaEnabled !== true) {
+      return;
+    }
+
+    const lastRepairAt = state.lastMediaRepairAt.get(peerId) || 0;
+    if (Date.now() - lastRepairAt < 1_500) {
+      return;
+    }
+
+    state.lastMediaRepairAt.set(peerId, Date.now());
+
+    if (shouldOfferTo(peerId)) {
+      negotiateWithPeer(peerId, { reason });
+      return;
+    }
+
+    sendCallSignal(peerId, "restart-request", { reason }).catch((error) => {
+      console.error("Media repair request failed:", error);
+    });
   }
 
   function handleReadOnlyKeydown(event) {
@@ -995,6 +1043,55 @@
     });
   }
 
+  function bindRemoteTrack(track) {
+    if (!track || track.__collabBound) {
+      return;
+    }
+
+    track.__collabBound = true;
+    track.onunmute = () => {
+      renderRemoteMedia();
+      updateMediaControls();
+    };
+    track.onended = () => {
+      renderRemoteMedia();
+      updateMediaControls();
+    };
+  }
+
+  function refreshRemoteStream(entry) {
+    if (!entry?.remoteStream || !entry?.pc) {
+      return;
+    }
+
+    const receiverTracks = entry.pc.getReceivers()
+      .map((receiver) => receiver.track)
+      .filter((track) => Boolean(track) && track.readyState === "live");
+    const preferredTracks = new Map();
+
+    receiverTracks.forEach((track) => {
+      if (!preferredTracks.has(track.kind)) {
+        preferredTracks.set(track.kind, track);
+      }
+    });
+
+    const activeTracks = [...preferredTracks.values()];
+    const activeTrackIds = new Set(activeTracks.map((track) => track.id));
+
+    entry.remoteStream.getTracks().forEach((track) => {
+      if (!activeTrackIds.has(track.id) || track.readyState === "ended") {
+        entry.remoteStream.removeTrack(track);
+      }
+    });
+
+    activeTracks.forEach((track) => {
+      bindRemoteTrack(track);
+      if (!entry.remoteStream.getTracks().some((candidate) => candidate.id === track.id)) {
+        entry.remoteStream.addTrack(track);
+      }
+    });
+  }
+
   function ensureRemoteTile(peerId) {
     let tile = state.remoteTiles.get(peerId);
     if (tile) {
@@ -1156,6 +1253,7 @@
 
     const activePeerIds = new Set();
     for (const [peerId, entry] of state.peerConnections.entries()) {
+      refreshRemoteStream(entry);
       if (!entry.remoteStream || entry.remoteStream.getTracks().length === 0) {
         continue;
       }
@@ -1229,28 +1327,35 @@
   }
 
   function syncPeerConnectionTracks(entry) {
-    const localTracks = state.localStream?.getTracks() || [];
-    const senders = entry.pc.getSenders();
+    const localTracksByKind = new Map((state.localStream?.getTracks() || []).map((track) => [track.kind, track]));
+    const transceivers = entry.pc.getTransceivers();
 
-    if (localTracks.length === 0) {
-      if (!entry.recvOnlyReady) {
-        entry.pc.addTransceiver("audio", { direction: "recvonly" });
-        entry.pc.addTransceiver("video", { direction: "recvonly" });
-        entry.recvOnlyReady = true;
-      }
-      return;
-    }
+    ["audio", "video"].forEach((kind) => {
+      const localTrack = localTracksByKind.get(kind) || null;
+      const transceiver = transceivers.find((candidate) =>
+        candidate.receiver?.track?.kind === kind ||
+        candidate.sender?.track?.kind === kind
+      );
 
-    localTracks.forEach((track) => {
-      const existingSender = senders.find((sender) => sender.track && sender.track.kind === track.kind);
-      if (existingSender) {
-        if (existingSender.track !== track) {
-          existingSender.replaceTrack(track).catch(() => {});
+      if (transceiver) {
+        if (transceiver.sender?.track !== localTrack) {
+          transceiver.sender?.replaceTrack(localTrack).catch(() => {});
+        }
+
+        const nextDirection = localTrack ? "sendrecv" : "recvonly";
+        if (transceiver.direction !== nextDirection) {
+          try {
+            transceiver.direction = nextDirection;
+          } catch {
+            // Some browsers may reject direction changes during transient signaling states.
+          }
         }
         return;
       }
 
-      entry.pc.addTrack(track, state.localStream);
+      if (localTrack && state.localStream) {
+        entry.pc.addTrack(localTrack, state.localStream);
+      }
     });
   }
 
@@ -1258,7 +1363,8 @@
     return state.clientId > peerId;
   }
 
-  function ensurePeerConnection(peerId) {
+  function ensurePeerConnection(peerId, options = {}) {
+    const syncTracks = options.syncTracks !== false;
     if (!peerId || peerId === state.clientId) {
       return null;
     }
@@ -1266,7 +1372,9 @@
     let entry = state.peerConnections.get(peerId);
     if (entry) {
       applyIceServers(entry);
-      syncPeerConnectionTracks(entry);
+      if (syncTracks) {
+        syncPeerConnectionTracks(entry);
+      }
       return entry;
     }
 
@@ -1275,12 +1383,14 @@
       pc,
       remoteStream: new MediaStream(),
       pendingCandidates: [],
-      recvOnlyReady: false,
-      restartInFlight: false
+      restartInFlight: false,
+      makingOffer: false
     };
     state.peerConnections.set(peerId, entry);
     applyIceServers(entry);
-    syncPeerConnectionTracks(entry);
+    if (syncTracks) {
+      syncPeerConnectionTracks(entry);
+    }
 
     pc.onicecandidate = (event) => {
       if (!event.candidate) {
@@ -1294,18 +1404,12 @@
 
     pc.ontrack = (event) => {
       const track = event.track;
-      if (track && !entry.remoteStream.getTracks().some((candidate) => candidate.id === track.id)) {
-        entry.remoteStream.addTrack(track);
-      }
-      if (track) {
-        track.onunmute = () => {
-          renderRemoteMedia();
-          updateMediaControls();
-        };
-        track.onended = () => {
-          renderRemoteMedia();
-          updateMediaControls();
-        };
+      bindRemoteTrack(track);
+      if (event.streams && event.streams[0]) {
+        entry.remoteStream = event.streams[0];
+        entry.remoteStream.getTracks().forEach(bindRemoteTrack);
+      } else {
+        refreshRemoteStream(entry);
       }
       renderRemoteMedia();
       updateMediaControls();
@@ -1314,6 +1418,7 @@
     pc.onconnectionstatechange = () => {
       if (["connected"].includes(pc.connectionState)) {
         entry.restartInFlight = false;
+        refreshRemoteStream(entry);
         renderRemoteMedia();
         updateMediaControls();
         return;
@@ -1327,6 +1432,7 @@
     pc.oniceconnectionstatechange = () => {
       if (["connected", "completed"].includes(pc.iceConnectionState)) {
         entry.restartInFlight = false;
+        refreshRemoteStream(entry);
         renderRemoteMedia();
         updateMediaControls();
         return;
@@ -1372,13 +1478,29 @@
       return;
     }
 
+    if (entry.makingOffer) {
+      return;
+    }
+
+    if (!options.iceRestart && entry.pc.signalingState !== "stable") {
+      return;
+    }
+
     try {
+      entry.makingOffer = true;
       const offer = await entry.pc.createOffer(options.iceRestart ? { iceRestart: true } : undefined);
       await entry.pc.setLocalDescription(offer);
       await sendCallSignal(peerId, "offer", entry.pc.localDescription.toJSON());
     } catch (error) {
       entry.restartInFlight = false;
       console.error("Offer creation failed:", error);
+      window.setTimeout(() => {
+        if (!state.destroyed && state.localStream && state.peers.some((peer) => peer.clientId === peerId)) {
+          negotiateWithPeer(peerId, options);
+        }
+      }, 1200);
+    } finally {
+      entry.makingOffer = false;
     }
   }
 
@@ -1396,6 +1518,10 @@
     if (message.signalType === "announce-media") {
       if (shouldOfferTo(peerId)) {
         await negotiateWithPeer(peerId);
+      } else if (state.localStream) {
+        await sendCallSignal(peerId, "restart-request", {
+          reason: "announce-media"
+        });
       }
       return;
     }
@@ -1407,7 +1533,9 @@
       return;
     }
 
-    const entry = ensurePeerConnection(peerId);
+    const entry = ensurePeerConnection(peerId, {
+      syncTracks: message.signalType !== "offer"
+    });
     if (!entry) {
       return;
     }
@@ -1461,10 +1589,12 @@
         })
       ]);
       state.localStream = stream;
+      state.mediaEnabled = true;
       state.micEnabled = true;
       state.cameraEnabled = true;
       renderRemoteMedia();
       updateMediaControls();
+      await sendPresence();
 
       await sendCallSignal("", "announce-media", {
         hasAudio: stream.getAudioTracks().length > 0,
@@ -1472,12 +1602,29 @@
       });
 
       for (const peer of state.peers) {
-        if (peer.clientId !== state.clientId && shouldOfferTo(peer.clientId)) {
+        if (peer.clientId === state.clientId || peer.mediaEnabled !== true) {
+          continue;
+        }
+
+        if (shouldOfferTo(peer.clientId)) {
           await negotiateWithPeer(peer.clientId);
+        } else {
+          await sendCallSignal(peer.clientId, "restart-request", {
+            reason: "join-media"
+          });
         }
       }
+
+      window.setTimeout(() => {
+        if (!state.destroyed) {
+          for (const peer of state.peers) {
+            requestPeerMediaSync(peer.clientId, "join-media-followup");
+          }
+        }
+      }, 1_500);
     } catch (error) {
       console.error("Joining media failed:", error);
+      state.mediaEnabled = false;
       alert("Camera/audio access failed. Please allow microphone and camera access to join the call.");
     } finally {
       state.mediaBusy = false;
@@ -1490,6 +1637,7 @@
       track.stop();
     });
     state.localStream = null;
+    state.mediaEnabled = false;
     state.micEnabled = false;
     state.cameraEnabled = false;
   }
@@ -1511,6 +1659,9 @@
     closeAllPeerConnections();
     renderRemoteMedia();
     updateMediaControls();
+    sendPresence().catch((error) => {
+      console.error("Presence update after leaving media failed:", error);
+    });
   }
 
   function toggleMicrophone() {
@@ -1721,10 +1872,37 @@
     }, snapshotPollIntervalMs);
   }
 
+  function ensureMediaMeshMonitor() {
+    if (state.mediaMeshTimer) {
+      return;
+    }
+
+    state.mediaMeshTimer = window.setInterval(() => {
+      if (state.destroyed || !state.ready || !state.localStream) {
+        return;
+      }
+
+      for (const peer of state.peers) {
+        if (peer.clientId === state.clientId) {
+          continue;
+        }
+
+        const entry = state.peerConnections.get(peer.clientId);
+        const hasLiveRemoteTracks = Boolean(entry?.remoteStream?.getTracks().some((track) => track.readyState === "live"));
+        const isConnected = entry ? ["connected", "completed"].includes(entry.pc.iceConnectionState) : false;
+
+        if (!entry || !hasLiveRemoteTracks || !isConnected) {
+          requestPeerMediaSync(peer.clientId, "mesh-monitor");
+        }
+      }
+    }, 3_000);
+  }
+
   function startRealtime() {
     ensureHealthMonitor();
     ensureSyncMonitor();
     ensureSnapshotPolling();
+    ensureMediaMeshMonitor();
     connectStream();
     sendPresence();
   }
@@ -1828,7 +2006,8 @@
         },
         body: JSON.stringify({
           clientId: state.clientId,
-          name: state.name
+          name: state.name,
+          mediaEnabled: state.mediaEnabled
         })
       });
 

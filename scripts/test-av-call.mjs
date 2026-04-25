@@ -48,6 +48,22 @@ async function waitForLive(page, timeout = 30_000) {
   );
 }
 
+async function waitForRemoteMediaCount(page, expectedCount, timeout = 20_000) {
+  await page.waitForFunction((count) => {
+    const videos = [...document.querySelectorAll(".collab-media-panel__remote-grid .collab-media-panel__video")];
+    return videos.length >= count && videos.every((video) => {
+      const stream = video.srcObject;
+      const videoTracks = stream?.getVideoTracks?.() || [];
+      const audioTracks = stream?.getAudioTracks?.() || [];
+      return Boolean(stream) &&
+        video.readyState >= 2 &&
+        video.videoWidth > 0 &&
+        videoTracks.some((track) => track.readyState === "live") &&
+        audioTracks.some((track) => track.readyState === "live");
+    });
+  }, expectedCount, { timeout });
+}
+
 async function main() {
   const shouldStartLocalServer = !process.env.TEST_BASE_URL;
   const server = shouldStartLocalServer
@@ -86,8 +102,10 @@ async function main() {
     try {
       const ctxA = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
       const ctxB = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+      const ctxC = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
       const pageA = await ctxA.newPage();
       const pageB = await ctxB.newPage();
+      const pageC = await ctxC.newPage();
       const url = `${baseUrl}/${puzzleId}?room=av-smoke-${Date.now()}`;
 
       await Promise.all([
@@ -109,46 +127,37 @@ async function main() {
       await pageB.getByRole("button", { name: "Join AV" }).click();
 
       await Promise.all([
-        pageA.waitForFunction(() => {
-          const videos = [...document.querySelectorAll(".collab-media-panel__remote-grid .collab-media-panel__video")];
-          return videos.length >= 1 && videos.every((video) => {
-            const stream = video.srcObject;
-            const videoTracks = stream?.getVideoTracks?.() || [];
-            const audioTracks = stream?.getAudioTracks?.() || [];
-            return Boolean(stream) &&
-              video.readyState >= 2 &&
-              video.videoWidth > 0 &&
-              videoTracks.some((track) => track.readyState === "live") &&
-              audioTracks.some((track) => track.readyState === "live");
-          });
-        }, { timeout: 20_000 }),
-        pageB.waitForFunction(() => {
-          const videos = [...document.querySelectorAll(".collab-media-panel__remote-grid .collab-media-panel__video")];
-          return videos.length >= 1 && videos.every((video) => {
-            const stream = video.srcObject;
-            const videoTracks = stream?.getVideoTracks?.() || [];
-            const audioTracks = stream?.getAudioTracks?.() || [];
-            return Boolean(stream) &&
-              video.readyState >= 2 &&
-              video.videoWidth > 0 &&
-              videoTracks.some((track) => track.readyState === "live") &&
-              audioTracks.some((track) => track.readyState === "live");
-          });
-        }, { timeout: 20_000 })
+        waitForRemoteMediaCount(pageA, 1),
+        waitForRemoteMediaCount(pageB, 1)
+      ]);
+
+      await pageC.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      await dismissStartPuzzle(pageC);
+      await waitForLive(pageC, 45_000);
+      await pageC.getByRole("button", { name: "Join AV" }).click();
+
+      await Promise.all([
+        waitForRemoteMediaCount(pageA, 2, 25_000),
+        waitForRemoteMediaCount(pageB, 2, 25_000),
+        waitForRemoteMediaCount(pageC, 2, 25_000)
       ]);
 
       console.log(JSON.stringify({
         aStatus: await pageA.locator(".collab-dock__media-status").textContent(),
         bStatus: await pageB.locator(".collab-dock__media-status").textContent(),
+        cStatus: await pageC.locator(".collab-dock__media-status").textContent(),
         aRemote: await pageA.locator(".collab-media-panel__remote-grid .collab-media-panel__video").count(),
         bRemote: await pageB.locator(".collab-media-panel__remote-grid .collab-media-panel__video").count(),
+        cRemote: await pageC.locator(".collab-media-panel__remote-grid .collab-media-panel__video").count(),
         aRemoteWidth: await pageA.locator(".collab-media-panel__remote-grid .collab-media-panel__video").first().evaluate((video) => video.videoWidth),
-        bRemoteWidth: await pageB.locator(".collab-media-panel__remote-grid .collab-media-panel__video").first().evaluate((video) => video.videoWidth)
+        bRemoteWidth: await pageB.locator(".collab-media-panel__remote-grid .collab-media-panel__video").first().evaluate((video) => video.videoWidth),
+        cRemoteWidth: await pageC.locator(".collab-media-panel__remote-grid .collab-media-panel__video").first().evaluate((video) => video.videoWidth)
       }, null, 2));
 
       await Promise.all([
         ctxA.close(),
-        ctxB.close()
+        ctxB.close(),
+        ctxC.close()
       ]);
     } finally {
       await browser.close();

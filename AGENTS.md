@@ -39,9 +39,9 @@ $env:NODE_PATH='C:\Users\rubie\.cache\codex-runtimes\codex-primary-runtime\depen
 What it checks:
 
 - starts the local server with a local public origin
-- opens the same room in two separate browser contexts
-- joins camera/audio in both tabs with fake media devices
-- verifies each tab receives at least one remote media tile
+- opens the same room in three browser contexts
+- joins camera/audio in the first two tabs, then has a third participant join later
+- verifies every tab receives the expected remote media tiles after the late join
 
 ## Extra Check For Room Control Changes
 

@@ -375,7 +375,8 @@ function activePeers(room) {
       clientId: client.clientId,
       name: client.name || `Solver ${client.clientId.slice(0, 4)}`,
       connectedAt: client.connectedAt,
-      lastSeen: client.lastSeen
+      lastSeen: client.lastSeen,
+      mediaEnabled: client.mediaEnabled === true
     });
   }
 
@@ -1543,12 +1544,14 @@ async function handlePresence(req, res, url) {
   const body = await readJsonBody(req);
   const clientId = sanitizeRoomId(body.clientId, sha(Math.random()).slice(0, 8));
   const name = String(body.name || "").trim().slice(0, 48);
+  const mediaEnabled = body.mediaEnabled === true;
   const existingClient = room.clients.get(clientId);
   room.clients.set(clientId, {
     clientId,
     connectedAt: existingClient?.connectedAt || Date.now(),
     lastSeen: Date.now(),
     name,
+    mediaEnabled,
     res: existingClient?.res || null,
     pingId: existingClient?.pingId || null
   });
@@ -1658,7 +1661,7 @@ async function handleCallSignal(req, res, url) {
       continue;
     }
 
-    if (!client.res.writableEnded) {
+    if (client.res && !client.res.writableEnded) {
       writeSse(client.res, "call", eventPayload);
     }
   }

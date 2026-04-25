@@ -1155,11 +1155,14 @@
       return;
     }
 
-    if (event.target instanceof Element && event.target.closest(".collab-dock, .collab-media-panel")) {
+    if (event.target instanceof Element && event.target.closest(".collab-dock, .collab-media-panel, .collab-notes-panel")) {
       return;
     }
 
-    if (event.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(event.target.tagName)) {
+    if (
+      event.target instanceof HTMLElement &&
+      (event.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(event.target.tagName))
+    ) {
       return;
     }
 

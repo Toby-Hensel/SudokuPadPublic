@@ -90,6 +90,16 @@ async function waitForRemoteHighlight(page, row, col, timeoutMs = 10_000) {
   throw new Error(`Remote highlight ${row},${col} did not appear in time.`);
 }
 
+async function waitForDockReady(page, timeoutMs = 10_000) {
+  await page.waitForFunction(
+    () => {
+      const summary = document.querySelector(".collab-dock__control-summary");
+      return Boolean(summary && summary.textContent && summary.textContent.trim().length > 0);
+    },
+    { timeout: timeoutMs }
+  );
+}
+
 async function waitForReplaySync(pageA, pageB, previousActions, timeoutMs = 10_000) {
   const previousHash = JSON.stringify(normalizeReplayActions(previousActions));
   const startedAt = Date.now();
@@ -141,22 +151,25 @@ async function runScenario(browser, scenario) {
     await dismissStartPuzzle(pageB);
     await waitForLive(pageB, 45_000);
     await waitForController(pageA);
+    await waitForDockReady(pageB, 15_000);
 
     const box = await pageA.locator("#svgrenderer").boundingBox();
     if (!box) {
       throw new Error("Could not find Sudoku board SVG.");
     }
 
-    const metrics = [];
-    for (const action of scenario.actions) {
-      await dismissStartPuzzle(pageA);
-      await dismissStartPuzzle(pageB);
-      const syncStartedAt = Date.now();
-      const previousActions = await getReplayActions(pageA);
-      await action.run(pageA, box);
-      const syncedActions = action.waitForSync
-        ? await action.waitForSync(pageA, pageB, previousActions)
-        : await waitForReplaySync(pageA, pageB, previousActions);
+      const metrics = [];
+      for (const action of scenario.actions) {
+        await dismissStartPuzzle(pageA);
+        await dismissStartPuzzle(pageB);
+        const syncStartedAt = Date.now();
+        const actorPage = action.actor === "pageB" ? pageB : pageA;
+        const receiverPage = actorPage === pageA ? pageB : pageA;
+        const previousActions = await getReplayActions(actorPage);
+        await action.run(actorPage, box);
+        const syncedActions = action.waitForSync
+          ? await action.waitForSync(actorPage, receiverPage, previousActions)
+          : await waitForReplaySync(actorPage, receiverPage, previousActions);
 
       const syncMs = typeof syncedActions === "number" ? syncedActions : (Date.now() - syncStartedAt);
       if (syncMs > maxSyncMs) {
@@ -231,6 +244,14 @@ async function main() {
               waitForSync: (pageA, pageB) => waitForRemoteHighlight(pageB, 0, 0)
             },
             {
+              label: "highlight-return",
+              actor: "pageB",
+              run: async (page, box) => {
+                await page.mouse.click(box.x + 100, box.y + 40);
+              },
+              waitForSync: (pageA, pageB) => waitForRemoteHighlight(pageB, 0, 1)
+            },
+            {
               label: "digit",
               run: async (page, box) => {
                 await page.mouse.click(box.x + 40, box.y + 40);
@@ -277,6 +298,14 @@ async function main() {
                 await page.mouse.click(box.x + 40, box.y + 40);
               },
               waitForSync: (pageA, pageB) => waitForRemoteHighlight(pageB, 0, 0)
+            },
+            {
+              label: "highlight-return",
+              actor: "pageB",
+              run: async (page, box) => {
+                await page.mouse.click(box.x + 100, box.y + 40);
+              },
+              waitForSync: (pageA, pageB) => waitForRemoteHighlight(pageB, 0, 1)
             },
             {
               label: "digit",

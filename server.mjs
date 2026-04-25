@@ -446,6 +446,15 @@ function canClientEdit(room, clientId) {
   return Boolean(clientId) && room.controllerClientId === clientId;
 }
 
+function canClientHighlight(room, clientId) {
+  if (!clientId) {
+    return false;
+  }
+
+  const activeClientIds = new Set(activePeers(room).map((peer) => peer.clientId));
+  return activeClientIds.has(clientId);
+}
+
 function getHighlightPayloads(room) {
   const cutoff = Date.now() - 4_000;
   const activeClientIds = new Set(activePeers(room).map((peer) => peer.clientId));
@@ -1812,9 +1821,9 @@ async function handleHighlight(req, res, url) {
   const rows = Math.max(1, Math.min(64, Number(body.rows) || 9));
   const cols = Math.max(1, Math.min(64, Number(body.cols) || 9));
 
-  if (!canClientEdit(room, clientId)) {
+  if (!canClientHighlight(room, clientId)) {
     sendJson(res, 403, {
-      error: "Only an active editor can broadcast highlights.",
+      error: "Only an active room participant can broadcast highlights.",
       control: buildControlPayload(room)
     });
     return;

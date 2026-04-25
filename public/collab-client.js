@@ -1272,7 +1272,7 @@
   }
 
   async function sendBoardHighlight(event) {
-    if (!canEditBoard() || state.applyingRemote) {
+    if (state.applyingRemote || !state.roomId || !state.clientId) {
       return;
     }
 
@@ -2647,9 +2647,8 @@
       return;
     }
 
-    const board = document.querySelector("#svgrenderer");
-    if (!puzzle.__collabHighlightPatched && board instanceof Element) {
-      board.addEventListener("pointerdown", sendBoardHighlight, true);
+    if (!puzzle.__collabHighlightPatched) {
+      document.addEventListener("pointerdown", sendBoardHighlight, true);
       puzzle.__collabHighlightPatched = true;
     }
 

@@ -42,6 +42,23 @@ What it checks:
 - joins camera/audio in both tabs with fake media devices
 - verifies each tab receives at least one remote media tile
 
+## Extra Check For Room Control Changes
+
+If you edit the host/controller editing permissions feature, also run this room-control regression before commit or push:
+
+```powershell
+$env:NODE_PATH='C:\Users\rubie\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\node_modules'
+& 'C:\Users\rubie\Documents\Codex\2026-04-22-i-would-like-you-to-create\runtime\node\node.exe' scripts/test-room-control.mjs
+```
+
+What it checks:
+
+- the first active solver becomes the initial controller
+- a non-controller cannot place digits before access is granted
+- another solver can request control and receive it
+- the new controller can edit and sync within 2 seconds
+- free-for-all lets every solver edit within 2 seconds
+
 ## Optional Public Smoke Test
 
 If the user reports that the deployed site is broken, also run the same test against the live site:

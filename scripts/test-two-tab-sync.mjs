@@ -49,8 +49,19 @@ async function waitForLive(page, timeout = 30_000) {
   );
 }
 
+async function waitForController(page, timeout = 15_000) {
+  await page.waitForFunction(
+    () => /you are controlling/i.test(document.querySelector(".collab-dock__control-summary")?.textContent || ""),
+    { timeout }
+  );
+}
+
 async function getReplayActions(page) {
   return page.evaluate(() => Replay.create(Framework.app.puzzle).actions || []);
+}
+
+function normalizeReplayActions(actions) {
+  return (Array.isArray(actions) ? actions : []).map((action) => String(action).replace(/^ds:[^/]+\//, "ds/"));
 }
 
 async function clickDigitButton(page, digit) {
@@ -66,7 +77,7 @@ async function clickControlButton(page, name) {
 }
 
 async function waitForReplaySync(pageA, pageB, previousActions, timeoutMs = 10_000) {
-  const previousHash = JSON.stringify(previousActions);
+  const previousHash = JSON.stringify(normalizeReplayActions(previousActions));
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -74,8 +85,8 @@ async function waitForReplaySync(pageA, pageB, previousActions, timeoutMs = 10_0
       getReplayActions(pageA),
       getReplayActions(pageB)
     ]);
-    const hashA = JSON.stringify(actionsA);
-    const hashB = JSON.stringify(actionsB);
+    const hashA = JSON.stringify(normalizeReplayActions(actionsA));
+    const hashB = JSON.stringify(normalizeReplayActions(actionsB));
 
     if (hashA !== previousHash && hashA === hashB) {
       return actionsB;
@@ -108,20 +119,14 @@ async function runScenario(browser, scenario) {
   const url = `${baseUrl}/${puzzleId}?room=${roomId}`;
 
   try {
-    await Promise.all([
-      pageA.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 }),
-      pageB.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 })
-    ]);
+    await pageA.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await dismissStartPuzzle(pageA);
+    await waitForLive(pageA, 45_000);
 
-    await Promise.all([
-      dismissStartPuzzle(pageA),
-      dismissStartPuzzle(pageB)
-    ]);
-
-    await Promise.all([
-      waitForLive(pageA, 45_000),
-      waitForLive(pageB, 45_000)
-    ]);
+    await pageB.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await dismissStartPuzzle(pageB);
+    await waitForLive(pageB, 45_000);
+    await waitForController(pageA);
 
     const box = await pageA.locator("#svgrenderer").boundingBox();
     if (!box) {

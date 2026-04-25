@@ -60,6 +60,12 @@
     syncRequestInFlight: false,
     pollHealthy: false,
     peers: [],
+    control: {
+      hostClientId: null,
+      controllerClientId: null,
+      freeForAll: false,
+      accessRequests: []
+    },
     localStream: null,
     mediaEnabled: false,
     mediaBusy: false,
@@ -98,6 +104,7 @@
   restoreDockPosition();
   restoreMediaPanelPosition();
   setMediaPanelMinimized(localStorage.getItem(mediaPanelMinimizedKey) === "1");
+  renderRoomControl();
   updateMediaControls();
 
   ui.copyButton.addEventListener("click", async () => {
@@ -137,6 +144,27 @@
   ui.micButton.addEventListener("click", toggleMicrophone);
   ui.cameraButton.addEventListener("click", toggleCamera);
   ui.leaveMediaButton.addEventListener("click", leaveMediaSession);
+  ui.requestControlButton.addEventListener("click", () => {
+    submitRoomControl({ action: "request" }, ui.requestControlButton);
+  });
+  ui.freeForAllButton.addEventListener("click", () => {
+    submitRoomControl({
+      action: "set-free-for-all",
+      enabled: !state.control.freeForAll
+    }, ui.freeForAllButton);
+  });
+  ui.requestList.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-grant-client-id]") : null;
+    if (!button) {
+      return;
+    }
+
+    submitRoomControl({
+      action: "grant",
+      targetClientId: button.getAttribute("data-grant-client-id")
+    }, button);
+  });
+  window.addEventListener("keydown", handleReadOnlyKeydown, true);
 
   waitForSudokuPad()
     .then(() => {
@@ -179,6 +207,7 @@
     leaveMediaSession({ silent: true });
     endDockDrag();
     endMediaPanelDrag();
+    window.removeEventListener("keydown", handleReadOnlyKeydown, true);
   });
 
   function createUi() {
@@ -208,6 +237,15 @@
         <div class="collab-dock__label">
           Solvers in room
           <div class="collab-dock__peers"></div>
+        </div>
+        <div class="collab-dock__label">
+          Edit control
+          <div class="collab-dock__control-summary"></div>
+          <div class="collab-dock__actions collab-dock__actions--control">
+            <button class="collab-dock__button collab-dock__button--secondary" type="button">Request control</button>
+            <button class="collab-dock__button collab-dock__button--secondary" type="button">Enable free-for-all</button>
+          </div>
+          <div class="collab-dock__requests"></div>
         </div>
         <div class="collab-dock__label">
           Camera and audio
@@ -242,7 +280,19 @@
     `;
     document.body.appendChild(mediaPanel);
 
+    const readOnlyOverlay = document.createElement("div");
+    readOnlyOverlay.className = "collab-readonly";
+    readOnlyOverlay.hidden = true;
+    readOnlyOverlay.innerHTML = `
+      <div class="collab-readonly__card">
+        <div class="collab-readonly__title">Room control is active</div>
+        <div class="collab-readonly__message">Waiting for the controller…</div>
+      </div>
+    `;
+    document.body.appendChild(readOnlyOverlay);
+
     const inviteActions = dock.querySelectorAll(".collab-dock__actions")[0];
+    const controlActions = dock.querySelector(".collab-dock__actions--control");
     const mediaActions = dock.querySelector(".collab-dock__actions--media");
 
     return {
@@ -255,6 +305,10 @@
       copyButton: inviteActions.querySelector(".collab-dock__button--primary"),
       shareButton: inviteActions.querySelector(".collab-dock__button--secondary"),
       peers: dock.querySelector(".collab-dock__peers"),
+      controlSummary: dock.querySelector(".collab-dock__control-summary"),
+      requestControlButton: controlActions.querySelectorAll(".collab-dock__button--secondary")[0],
+      freeForAllButton: controlActions.querySelectorAll(".collab-dock__button--secondary")[1],
+      requestList: dock.querySelector(".collab-dock__requests"),
       mediaStatus: dock.querySelector(".collab-dock__media-status"),
       joinMediaButton: mediaActions.querySelector(".collab-dock__button--primary"),
       micButton: mediaActions.querySelectorAll(".collab-dock__button--secondary")[0],
@@ -265,7 +319,9 @@
       mediaPanelToggle: mediaPanel.querySelector(".collab-media-panel__toggle"),
       localVideoCard: mediaPanel.querySelector(".collab-media-panel__card--local"),
       localVideo: mediaPanel.querySelector(".collab-media-panel__video--local"),
-      remoteMedia: mediaPanel.querySelector(".collab-media-panel__remote-grid")
+      remoteMedia: mediaPanel.querySelector(".collab-media-panel__remote-grid"),
+      readOnlyOverlay,
+      readOnlyMessage: readOnlyOverlay.querySelector(".collab-readonly__message")
     };
   }
 
@@ -497,9 +553,121 @@
     }
   }
 
+  function normalizeControl(control) {
+    return {
+      hostClientId: typeof control?.hostClientId === "string" ? control.hostClientId : null,
+      controllerClientId: typeof control?.controllerClientId === "string" ? control.controllerClientId : null,
+      freeForAll: control?.freeForAll === true,
+      accessRequests: Array.isArray(control?.accessRequests)
+        ? control.accessRequests
+          .map((entry) => typeof entry?.clientId === "string"
+            ? {
+              clientId: entry.clientId,
+              name: typeof entry?.name === "string" && entry.name.trim()
+                ? entry.name.trim()
+                : `Solver ${entry.clientId.slice(0, 4)}`
+            }
+            : null)
+          .filter(Boolean)
+        : []
+    };
+  }
+
+  function getPeerName(clientId) {
+    if (!clientId) {
+      return "Nobody";
+    }
+
+    const peer = state.peers.find((candidate) => candidate.clientId === clientId);
+    if (peer?.name) {
+      return peer.name;
+    }
+
+    const request = state.control.accessRequests.find((candidate) => candidate.clientId === clientId);
+    if (request?.name) {
+      return request.name;
+    }
+
+    return `Solver ${clientId.slice(0, 4)}`;
+  }
+
+  function isCurrentController() {
+    return Boolean(state.control.controllerClientId) && state.control.controllerClientId === state.clientId;
+  }
+
+  function hasRequestedControl() {
+    return state.control.accessRequests.some((request) => request.clientId === state.clientId);
+  }
+
+  function canEditBoard() {
+    if (state.control.freeForAll) {
+      return true;
+    }
+
+    return isCurrentController();
+  }
+
+  function renderRoomControl() {
+    const controllerName = getPeerName(state.control.controllerClientId);
+    const hostName = getPeerName(state.control.hostClientId);
+
+    if (!state.control.controllerClientId) {
+      ui.controlSummary.textContent = "Checking who controls the board…";
+    } else if (state.control.freeForAll) {
+      ui.controlSummary.textContent = isCurrentController()
+        ? "Free-for-all is on. Everyone can place digits, marks, and lines."
+        : `Free-for-all is on. ${controllerName} can switch it off again.`;
+    } else if (isCurrentController()) {
+      ui.controlSummary.textContent = state.control.hostClientId === state.clientId
+        ? "You are controlling the board as the host."
+        : `You are controlling the board. Host: ${hostName}.`;
+    } else {
+      ui.controlSummary.textContent = `${controllerName} is controlling the board. Host: ${hostName}.`;
+    }
+
+    const requestPending = hasRequestedControl();
+    ui.requestControlButton.hidden = state.control.freeForAll || isCurrentController();
+    ui.requestControlButton.disabled = requestPending || !state.control.controllerClientId;
+    ui.requestControlButton.textContent = requestPending ? "Request sent" : "Request control";
+
+    ui.freeForAllButton.hidden = !isCurrentController();
+    ui.freeForAllButton.disabled = !isCurrentController();
+    ui.freeForAllButton.textContent = state.control.freeForAll ? "Disable free-for-all" : "Enable free-for-all";
+
+    ui.requestList.innerHTML = "";
+    ui.requestList.hidden = !(isCurrentController() && state.control.accessRequests.length > 0);
+
+    if (isCurrentController()) {
+      state.control.accessRequests.forEach((request) => {
+        const row = document.createElement("div");
+        row.className = "collab-dock__request";
+        row.innerHTML = `
+          <span class="collab-dock__request-name">${request.name}</span>
+          <button class="collab-dock__request-button" type="button" data-grant-client-id="${request.clientId}" aria-label="Grant control to ${request.name}">Grant ${request.name}</button>
+        `;
+        ui.requestList.appendChild(row);
+      });
+    }
+
+    ui.readOnlyOverlay.hidden = canEditBoard();
+    ui.readOnlyMessage.textContent = !state.control.controllerClientId
+      ? "Checking who controls the board for this room."
+      : state.control.freeForAll
+        ? "Free-for-all is on."
+        : requestPending
+          ? `${controllerName} controls the board right now. Your request is waiting for approval.`
+          : `${controllerName} controls the board right now. Use Request control if you want to place numbers.`;
+  }
+
+  function applyControlState(control) {
+    state.control = normalizeControl(control);
+    renderRoomControl();
+  }
+
   function renderPresence(payload) {
     const peers = Array.isArray(payload?.peers) ? payload.peers : [];
     state.peers = peers;
+    applyControlState(payload?.control);
     ui.peers.innerHTML = "";
 
     if (peers.length === 0) {
@@ -507,15 +675,14 @@
       pill.className = "collab-dock__peer";
       pill.textContent = "Just you";
       ui.peers.appendChild(pill);
-      return;
+    } else {
+      peers.forEach((peer) => {
+        const pill = document.createElement("span");
+        pill.className = "collab-dock__peer";
+        pill.textContent = peer.clientId === state.clientId ? `${peer.name} (you)` : peer.name;
+        ui.peers.appendChild(pill);
+      });
     }
-
-    peers.forEach((peer) => {
-      const pill = document.createElement("span");
-      pill.className = "collab-dock__peer";
-      pill.textContent = peer.clientId === state.clientId ? `${peer.name} (you)` : peer.name;
-      ui.peers.appendChild(pill);
-    });
 
     for (const peerId of [...state.peerConnections.keys()]) {
       if (!peers.some((peer) => peer.clientId === peerId)) {
@@ -533,6 +700,61 @@
 
     renderRemoteMedia();
     updateMediaControls();
+  }
+
+  async function submitRoomControl(payload, button) {
+    if (button) {
+      button.disabled = true;
+    }
+
+    try {
+      const response = await fetch(`/api/collab/control/${encodeURIComponent(state.roomId)}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          clientId: state.clientId,
+          ...payload
+        })
+      });
+      const responsePayload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(responsePayload.error || `Room control update failed with ${response.status}`);
+      }
+
+      renderPresence(responsePayload);
+    } catch (error) {
+      console.error("Room control update failed:", error);
+      alert(error.message);
+    } finally {
+      renderRoomControl();
+    }
+  }
+
+  function handleReadOnlyKeydown(event) {
+    if (state.applyingRemote || canEditBoard()) {
+      return;
+    }
+
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+
+    if (event.target instanceof Element && event.target.closest(".collab-dock, .collab-media-panel")) {
+      return;
+    }
+
+    if (event.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(event.target.tagName)) {
+      return;
+    }
+
+    const blockedKeys = new Set(["Backspace", "Delete", "Enter", " ", "Spacebar"]);
+    if (event.key.length === 1 || blockedKeys.has(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
   }
 
   function setMediaStatus(text) {
@@ -1381,6 +1603,7 @@
         "content-type": "application/json"
       },
       body: JSON.stringify({
+        clientId: state.clientId,
         puzzleId: state.puzzleId
       })
     });
@@ -1388,6 +1611,9 @@
     if (!response.ok) {
       throw new Error(`Room registration failed with ${response.status}`);
     }
+
+    const payload = await response.json();
+    applyControlState(payload.control);
   }
 
   async function pushLocalReplay() {
@@ -1419,11 +1645,27 @@
         })
       });
 
+      if (response.status === 403) {
+        const payload = await response.json().catch(() => ({}));
+        if (payload.control) {
+          applyControlState(payload.control);
+        }
+        if (payload.snapshot) {
+          await applySnapshot(payload.snapshot);
+        } else {
+          await fetchLatestSnapshot();
+        }
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(`Sync failed with ${response.status}`);
       }
 
       const payload = await response.json();
+      if (payload.control) {
+        applyControlState(payload.control);
+      }
       state.lastSentHash = hash;
       state.lastAppliedHash = hash;
       state.latestRevision = Math.max(state.latestRevision, Number(payload.revision) || 0);
@@ -1466,12 +1708,14 @@
     }
   }
 
-  async function applySnapshot(snapshot) {
-    if (!snapshot || !snapshot.replay || snapshot.revision <= state.latestRevision) {
+  async function applySnapshot(snapshot, options = {}) {
+    const force = options.force === true;
+
+    if (!snapshot || !snapshot.replay || (!force && snapshot.revision <= state.latestRevision)) {
       return;
     }
 
-    state.latestRevision = snapshot.revision;
+    state.latestRevision = Math.max(state.latestRevision, snapshot.revision || 0);
 
     if (state.applyingRemote) {
       state.queuedSnapshot = snapshot;
@@ -1484,7 +1728,7 @@
     const currentReplay = replayApi.create(framework.app.puzzle);
     const currentHash = getReplayHash(currentReplay);
     const snapshotHash = getReplayHash(snapshot.replay);
-    const hasUnsyncedLocalChanges = currentHash !== state.lastAppliedHash;
+    const hasUnsyncedLocalChanges = canEditBoard() && currentHash !== state.lastAppliedHash;
     const nextReplay = hasUnsyncedLocalChanges ? mergeReplays(snapshot.replay, currentReplay) : snapshot.replay;
     const nextHash = getReplayHash(nextReplay);
 
@@ -1546,7 +1790,7 @@
     state.pollHealthy = true;
 
     if (payload.snapshot) {
-      await applySnapshot(payload.snapshot);
+          await applySnapshot(payload.snapshot, { force: true });
     } else if ((getFramework().app.puzzle.replayStack || []).length > 1) {
       scheduleBroadcast();
     } else {
@@ -1671,7 +1915,7 @@
     const original = puzzle.saveProgress.bind(puzzle);
     puzzle.saveProgress = (...args) => {
       const result = original(...args);
-      if (!state.applyingRemote) {
+      if (!state.applyingRemote && canEditBoard()) {
         scheduleBroadcast();
       }
       return result;
@@ -1688,6 +1932,9 @@
 
     const original = puzzle.act.bind(puzzle);
     puzzle.act = (...args) => {
+      if (!state.applyingRemote && !canEditBoard()) {
+        return null;
+      }
       const result = original(...args);
       if (!state.applyingRemote) {
         scheduleBroadcast();

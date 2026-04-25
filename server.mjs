@@ -344,6 +344,10 @@ function getRoom(roomId) {
       puzzleId: null,
       latest: null,
       clients: new Map(),
+      hostClientId: null,
+      controllerClientId: null,
+      freeForAll: false,
+      accessRequests: [],
       updatedAt: Date.now()
     });
   }
@@ -375,12 +379,59 @@ function activePeers(room) {
   return peers.sort((left, right) => left.connectedAt - right.connectedAt);
 }
 
-function presencePayload(room) {
+function ensureRoomControlState(room) {
   const peers = activePeers(room);
+  const activeClientIds = new Set(peers.map((peer) => peer.clientId));
+  const nextHostClientId = activeClientIds.has(room.hostClientId) ? room.hostClientId : (peers[0]?.clientId || null);
+
+  room.hostClientId = nextHostClientId;
+
+  if (!activeClientIds.has(room.controllerClientId)) {
+    room.controllerClientId = nextHostClientId || (peers[0]?.clientId || null);
+  }
+
+  if (!Array.isArray(room.accessRequests)) {
+    room.accessRequests = [];
+  }
+
+  room.accessRequests = room.accessRequests.filter((clientId, index, list) =>
+    activeClientIds.has(clientId) &&
+    clientId !== room.controllerClientId &&
+    list.indexOf(clientId) === index
+  );
+
+  return peers;
+}
+
+function buildControlPayload(room, peers = ensureRoomControlState(room)) {
+  const peerMap = new Map(peers.map((peer) => [peer.clientId, peer]));
+  return {
+    hostClientId: room.hostClientId,
+    controllerClientId: room.controllerClientId,
+    freeForAll: room.freeForAll === true,
+    accessRequests: room.accessRequests.map((clientId) => ({
+      clientId,
+      name: peerMap.get(clientId)?.name || `Solver ${clientId.slice(0, 4)}`
+    }))
+  };
+}
+
+function canClientEdit(room, clientId) {
+  ensureRoomControlState(room);
+  if (room.freeForAll) {
+    return true;
+  }
+
+  return Boolean(clientId) && room.controllerClientId === clientId;
+}
+
+function presencePayload(room) {
+  const peers = ensureRoomControlState(room);
   return {
     roomId: room.roomId,
     count: peers.length,
-    peers
+    peers,
+    control: buildControlPayload(room, peers)
   };
 }
 
@@ -391,7 +442,7 @@ function writeSse(res, event, payload) {
 
 function broadcast(room, event, payload) {
   for (const client of room.clients.values()) {
-    if (!client.res.writableEnded) {
+    if (client.res && !client.res.writableEnded) {
       writeSse(client.res, event, payload);
     }
   }
@@ -1369,14 +1420,16 @@ function handleSse(req, res, url) {
     }
   }, 15_000);
 
+  const existingClient = room.clients.get(clientId);
   room.clients.set(clientId, {
     clientId,
-    connectedAt,
+    connectedAt: existingClient?.connectedAt || connectedAt,
     lastSeen: Date.now(),
-    name: "",
+    name: existingClient?.name || "",
     res,
     pingId
   });
+  ensureRoomControlState(room);
 
   writeSse(res, "presence", presencePayload(room));
 
@@ -1386,7 +1439,12 @@ function handleSse(req, res, url) {
 
   req.on("close", () => {
     clearInterval(pingId);
-    room.clients.delete(clientId);
+    const client = room.clients.get(clientId);
+    if (client) {
+      client.res = null;
+      client.pingId = null;
+      client.lastSeen = Date.now();
+    }
     room.updatedAt = Date.now();
     broadcast(room, "presence", presencePayload(room));
   });
@@ -1400,13 +1458,17 @@ async function handlePresence(req, res, url) {
   const body = await readJsonBody(req);
   const clientId = sanitizeRoomId(body.clientId, sha(Math.random()).slice(0, 8));
   const name = String(body.name || "").trim().slice(0, 48);
-  const client = room.clients.get(clientId);
+  const existingClient = room.clients.get(clientId);
+  room.clients.set(clientId, {
+    clientId,
+    connectedAt: existingClient?.connectedAt || Date.now(),
+    lastSeen: Date.now(),
+    name,
+    res: existingClient?.res || null,
+    pingId: existingClient?.pingId || null
+  });
 
-  if (client) {
-    client.name = name;
-    client.lastSeen = Date.now();
-  }
-
+  ensureRoomControlState(room);
   room.updatedAt = Date.now();
   const payload = presencePayload(room);
   broadcast(room, "presence", payload);
@@ -1418,6 +1480,7 @@ async function handleRoomRegistration(req, res, url) {
   const room = getRoom(roomId);
   const body = await readJsonBody(req);
   const puzzleId = normalizePuzzleId(body.puzzleId);
+  const clientId = sanitizeRoomId(body.clientId, "");
 
   if (!puzzleId) {
     sendJson(res, 400, { error: "Missing puzzleId." });
@@ -1425,11 +1488,21 @@ async function handleRoomRegistration(req, res, url) {
   }
 
   room.puzzleId = puzzleId;
+  if (clientId && room.clients.has(clientId)) {
+    if (!room.hostClientId) {
+      room.hostClientId = clientId;
+    }
+    if (!room.controllerClientId) {
+      room.controllerClientId = clientId;
+    }
+  }
+  ensureRoomControlState(room);
   room.updatedAt = Date.now();
 
   sendJson(res, 200, {
     roomId,
-    puzzleId
+    puzzleId,
+    control: buildControlPayload(room)
   });
 }
 
@@ -1511,12 +1584,13 @@ async function handleCallSignal(req, res, url) {
 async function handleSync(res, url) {
   const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "default");
   const room = getRoom(roomId);
+  const presence = presencePayload(room);
 
   sendJson(res, 200, {
     roomId,
     puzzleId: room.puzzleId || room.latest?.puzzleId || room.latest?.replay?.puzzleId || null,
     snapshot: room.latest,
-    presence: presencePayload(room)
+    presence
   });
 }
 
@@ -1537,9 +1611,19 @@ async function handleUpdate(req, res, url) {
   const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "default");
   const room = getRoom(roomId);
   const body = await readJsonBody(req);
+  const clientId = sanitizeRoomId(body.clientId, "anon");
 
   if (!body || typeof body !== "object" || !body.replay) {
     sendJson(res, 400, { error: "Missing replay payload." });
+    return;
+  }
+
+  if (!canClientEdit(room, clientId)) {
+    sendJson(res, 403, {
+      error: "Only the current controller can edit this room.",
+      control: buildControlPayload(room),
+      snapshot: room.latest || null
+    });
     return;
   }
 
@@ -1565,7 +1649,7 @@ async function handleUpdate(req, res, url) {
     revision: (room.latest?.revision || 0) + 1,
     updatedAt: Date.now(),
     puzzleId: nextReplay.puzzleId,
-    clientId: sanitizeRoomId(body.clientId, "anon"),
+    clientId,
     name: String(body.name || "").trim().slice(0, 48),
     replay: nextReplay,
     hash: nextHash,
@@ -1580,19 +1664,81 @@ async function handleUpdate(req, res, url) {
   sendJson(res, 200, {
     roomId,
     revision: room.latest.revision,
-    hash: room.latest.hash
+    hash: room.latest.hash,
+    control: buildControlPayload(room)
   });
+}
+
+async function handleRoomControl(req, res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "default");
+  const room = getRoom(roomId);
+  const body = await readJsonBody(req);
+  const clientId = sanitizeRoomId(body.clientId, "");
+  const targetClientId = sanitizeRoomId(body.targetClientId, "");
+  const action = String(body.action || "").trim().toLowerCase();
+  const peers = ensureRoomControlState(room);
+  const activeClientIds = new Set(peers.map((peer) => peer.clientId));
+
+  if (!clientId || !activeClientIds.has(clientId)) {
+    sendJson(res, 400, { error: "This participant is not active in the room." });
+    return;
+  }
+
+  if (action === "request") {
+    if (!room.freeForAll && clientId !== room.controllerClientId && !room.accessRequests.includes(clientId)) {
+      room.accessRequests.push(clientId);
+    }
+  } else if (action === "grant") {
+    if (clientId !== room.controllerClientId) {
+      sendJson(res, 403, { error: "Only the current controller can grant access." });
+      return;
+    }
+    if (!targetClientId || !activeClientIds.has(targetClientId)) {
+      sendJson(res, 400, { error: "That participant is no longer active." });
+      return;
+    }
+    room.controllerClientId = targetClientId;
+    room.accessRequests = room.accessRequests.filter((requestClientId) => requestClientId !== targetClientId);
+    room.freeForAll = false;
+  } else if (action === "set-free-for-all") {
+    if (clientId !== room.controllerClientId) {
+      sendJson(res, 403, { error: "Only the current controller can change free-for-all mode." });
+      return;
+    }
+    room.freeForAll = body.enabled === true;
+    if (room.freeForAll) {
+      room.accessRequests = [];
+    }
+  } else {
+    sendJson(res, 400, { error: "Unknown room control action." });
+    return;
+  }
+
+  ensureRoomControlState(room);
+  room.updatedAt = Date.now();
+  const payload = presencePayload(room);
+  broadcast(room, "presence", payload);
+  sendJson(res, 200, payload);
 }
 
 function pruneRooms() {
   const now = Date.now();
 
   for (const room of rooms.values()) {
+    let removedClient = false;
     for (const [clientId, client] of room.clients.entries()) {
       if (client.lastSeen < now - 60_000) {
-        clearInterval(client.pingId);
+        if (client.pingId) {
+          clearInterval(client.pingId);
+        }
         room.clients.delete(clientId);
+        removedClient = true;
       }
+    }
+
+    if (removedClient && room.clients.size > 0) {
+      room.updatedAt = Date.now();
+      broadcast(room, "presence", presencePayload(room));
     }
 
     if (room.clients.size === 0 && room.updatedAt < now - 24 * 60 * 60 * 1000) {
@@ -1676,6 +1822,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname.startsWith("/api/collab/call/")) {
       await handleCallSignal(req, res, url);
+      return;
+    }
+
+    if (req.method === "POST" && pathname.startsWith("/api/collab/control/")) {
+      await handleRoomControl(req, res, url);
       return;
     }
 

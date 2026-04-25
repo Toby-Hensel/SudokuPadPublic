@@ -121,6 +121,10 @@
   flex-wrap: wrap;
 }
 
+.collab-dock__actions--control {
+  flex-wrap: wrap;
+}
+
 .collab-dock__button {
   flex: 1;
   appearance: none;
@@ -184,6 +188,97 @@
   font-size: 0.82rem;
   color: #d5e4ec;
   background: rgba(255, 255, 255, 0.07);
+}
+
+.collab-dock__control-summary,
+.collab-dock__requests {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #c8d7df;
+  font-size: 0.88rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.collab-dock__requests {
+  display: grid;
+  gap: 8px;
+}
+
+.collab-dock__requests[hidden] {
+  display: none;
+}
+
+.collab-dock__request {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.collab-dock__request-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collab-dock__request-button {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 1px solid rgba(124, 245, 191, 0.18);
+  border-radius: 999px;
+  background: rgba(124, 245, 191, 0.14);
+  color: #eff7fb;
+  cursor: pointer;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.collab-readonly {
+  position: fixed;
+  inset: 0;
+  z-index: 9997;
+  display: grid;
+  align-items: end;
+  justify-items: center;
+  padding: 20px;
+  background: rgba(3, 9, 14, 0.01);
+}
+
+.collab-readonly[hidden] {
+  display: none;
+}
+
+.collab-readonly__card {
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border: 1px solid rgba(124, 245, 191, 0.18);
+  border-radius: 16px;
+  background: rgba(6, 16, 23, 0.88);
+  color: #eff7fb;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(12px);
+  text-align: center;
+}
+
+.collab-readonly__title {
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8aa4b3;
+}
+
+.collab-readonly__message {
+  margin-top: 6px;
+  font-size: 0.9rem;
+  color: #dbe7ee;
 }
 
 .collab-media-panel {

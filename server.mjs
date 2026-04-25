@@ -382,7 +382,8 @@ function activePeers(room) {
   const peers = [];
 
   for (const client of room.clients.values()) {
-    if (client.lastSeen < cutoff) {
+    const hasOpenStream = Boolean(client.res && !client.res.writableEnded);
+    if (!hasOpenStream && client.lastSeen < cutoff) {
       continue;
     }
 
@@ -1933,6 +1934,10 @@ function pruneRooms() {
   for (const room of rooms.values()) {
     let removedClient = false;
     for (const [clientId, client] of room.clients.entries()) {
+      if (client.res && !client.res.writableEnded) {
+        continue;
+      }
+
       if (client.lastSeen < now - 60_000) {
         if (client.pingId) {
           clearInterval(client.pingId);

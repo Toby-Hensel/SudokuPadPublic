@@ -466,7 +466,7 @@
 
 .collab-notes-panel {
   position: fixed;
-  right: 18px;
+  left: 18px;
   bottom: 18px;
   z-index: 10000;
   width: min(340px, calc(100vw - 24px));
@@ -634,9 +634,9 @@
   }
 
   .collab-notes-panel {
+    left: 12px;
     right: 12px;
     bottom: 12px;
-    left: 12px;
     width: auto;
   }
 }

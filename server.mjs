@@ -57,6 +57,20 @@ function sha(input) {
   return createHash("sha256").update(String(input)).digest("hex");
 }
 
+function hashNumber(input) {
+  let hash = 0;
+  const text = String(input || "");
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) % 360;
+  }
+  return hash;
+}
+
+function getClientNoteColor(clientId) {
+  const hue = hashNumber(clientId);
+  return `hsl(${hue} 72% 62%)`;
+}
+
 function makeRoomId() {
   return randomBytes(6).toString("base64url").toLowerCase();
 }
@@ -346,6 +360,7 @@ function getRoom(roomId) {
       puzzleId: null,
       latest: null,
       highlights: new Map(),
+      notes: new Map(),
       clients: new Map(),
       hostClientId: null,
       controllerClientId: null,
@@ -376,7 +391,8 @@ function activePeers(room) {
       name: client.name || `Solver ${client.clientId.slice(0, 4)}`,
       connectedAt: client.connectedAt,
       lastSeen: client.lastSeen,
-      mediaEnabled: client.mediaEnabled === true
+      mediaEnabled: client.mediaEnabled === true,
+      noteColor: client.noteColor || getClientNoteColor(client.clientId)
     });
   }
 
@@ -452,6 +468,28 @@ function getHighlightPayloads(room) {
   }
 
   return payloads.sort((left, right) => left.updatedAt - right.updatedAt);
+}
+
+function getNotePayloads(room) {
+  const peers = activePeers(room);
+  const activeClientIds = new Set(peers.map((peer) => peer.clientId));
+  const payloads = [];
+
+  for (const [clientId, note] of room.notes.entries()) {
+    if (!note || !activeClientIds.has(clientId)) {
+      room.notes.delete(clientId);
+      continue;
+    }
+
+    payloads.push({
+      clientId,
+      text: String(note.text || "").slice(0, 4000),
+      updatedAt: note.updatedAt || 0
+    });
+  }
+
+  const peerOrder = new Map(peers.map((peer, index) => [peer.clientId, index]));
+  return payloads.sort((left, right) => (peerOrder.get(left.clientId) || 0) - (peerOrder.get(right.clientId) || 0));
 }
 
 function presencePayload(room) {
@@ -1512,12 +1550,15 @@ function handleSse(req, res, url) {
     connectedAt: existingClient?.connectedAt || connectedAt,
     lastSeen: Date.now(),
     name: existingClient?.name || "",
+    mediaEnabled: existingClient?.mediaEnabled === true,
+    noteColor: existingClient?.noteColor || getClientNoteColor(clientId),
     res,
     pingId
   });
   ensureRoomControlState(room);
 
   writeSse(res, "presence", presencePayload(room));
+  writeSse(res, "notes", getNotePayloads(room));
 
   if (room.latest) {
     writeSse(res, "snapshot", room.latest);
@@ -1552,6 +1593,7 @@ async function handlePresence(req, res, url) {
     lastSeen: Date.now(),
     name,
     mediaEnabled,
+    noteColor: existingClient?.noteColor || getClientNoteColor(clientId),
     res: existingClient?.res || null,
     pingId: existingClient?.pingId || null
   });
@@ -1679,7 +1721,8 @@ async function handleSync(res, url) {
     puzzleId: room.puzzleId || room.latest?.puzzleId || room.latest?.replay?.puzzleId || null,
     snapshot: room.latest,
     presence,
-    highlights: getHighlightPayloads(room)
+    highlights: getHighlightPayloads(room),
+    notes: getNotePayloads(room)
   });
 }
 
@@ -1852,6 +1895,38 @@ async function handleRoomControl(req, res, url) {
   sendJson(res, 200, payload);
 }
 
+async function handleNote(req, res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "default");
+  const room = getRoom(roomId);
+  const body = await readJsonBody(req);
+  const clientId = sanitizeRoomId(body.clientId, "");
+  const text = String(body.text || "").slice(0, 4000);
+  const peers = ensureRoomControlState(room);
+  const activeClientIds = new Set(peers.map((peer) => peer.clientId));
+
+  if (!clientId || !activeClientIds.has(clientId)) {
+    sendJson(res, 400, { error: "This participant is not active in the room." });
+    return;
+  }
+
+  if (text.trim()) {
+    room.notes.set(clientId, {
+      text,
+      updatedAt: Date.now()
+    });
+  } else {
+    room.notes.delete(clientId);
+  }
+
+  room.updatedAt = Date.now();
+  const notes = getNotePayloads(room);
+  broadcast(room, "notes", notes);
+  sendJson(res, 200, {
+    ok: true,
+    notes
+  });
+}
+
 function pruneRooms() {
   const now = Date.now();
 
@@ -1862,6 +1937,7 @@ function pruneRooms() {
         if (client.pingId) {
           clearInterval(client.pingId);
         }
+        room.notes.delete(clientId);
         room.clients.delete(clientId);
         removedClient = true;
       }
@@ -1870,6 +1946,7 @@ function pruneRooms() {
     if (removedClient && room.clients.size > 0) {
       room.updatedAt = Date.now();
       broadcast(room, "presence", presencePayload(room));
+      broadcast(room, "notes", getNotePayloads(room));
     }
 
     if (room.clients.size === 0 && room.updatedAt < now - 24 * 60 * 60 * 1000) {
@@ -1963,6 +2040,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname.startsWith("/api/collab/highlight/")) {
       await handleHighlight(req, res, url);
+      return;
+    }
+
+    if (req.method === "POST" && pathname.startsWith("/api/collab/note/")) {
+      await handleNote(req, res, url);
       return;
     }
 

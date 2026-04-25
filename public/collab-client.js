@@ -28,11 +28,14 @@
   const dockPositionKey = `collab-dock-position:${puzzleId}`;
   const mediaPanelPositionKey = `collab-media-panel-position:${puzzleId}`;
   const mediaPanelMinimizedKey = `collab-media-panel-minimized:${puzzleId}`;
+  const notesPanelPositionKey = `collab-notes-panel-position:${puzzleId}`;
+  const notesPanelMinimizedKey = `collab-notes-panel-minimized:${puzzleId}`;
   const mediaOrderKey = `collab-media-order:${roomId}`;
   const immediateBroadcastDelayMs = 45;
   const fallbackBroadcastDelayMs = 120;
   const syncMonitorIntervalMs = 250;
   const snapshotPollIntervalMs = 500;
+  const noteSyncDelayMs = 160;
 
   const state = {
     roomId,
@@ -74,6 +77,12 @@
     mediaBusy: false,
     micEnabled: true,
     cameraEnabled: true,
+    notes: new Map(),
+    noteCards: new Map(),
+    localNoteText: "",
+    localNoteDirty: false,
+    noteSyncTimer: null,
+    noteSyncInFlight: false,
     iceServers: fallbackIceServers,
     iceServersFetchedAt: 0,
     peerConnections: new Map(),
@@ -94,6 +103,9 @@
     mediaDragPointerId: null,
     mediaDragOffsetX: 0,
     mediaDragOffsetY: 0,
+    notesDragPointerId: null,
+    notesDragOffsetX: 0,
+    notesDragOffsetY: 0,
     destroyed: false
   };
 
@@ -108,7 +120,10 @@
   restoreDockPosition();
   restoreMediaPanelPosition();
   setMediaPanelMinimized(localStorage.getItem(mediaPanelMinimizedKey) === "1");
+  restoreNotesPanelPosition();
+  setNotesPanelMinimized(localStorage.getItem(notesPanelMinimizedKey) === "1");
   renderRoomControl();
+  renderSharedNotes();
   updateMediaControls();
   window.addEventListener("resize", renderRemoteHighlights);
   window.addEventListener("scroll", renderRemoteHighlights, true);
@@ -136,6 +151,11 @@
   ui.mediaPanelToggle.addEventListener("click", () => {
     const minimized = !ui.mediaPanel.classList.contains("collab-media-panel--minimized");
     setMediaPanelMinimized(minimized);
+  });
+  ui.notesPanelHead.addEventListener("pointerdown", beginNotesPanelDrag);
+  ui.notesPanelToggle.addEventListener("click", () => {
+    const minimized = !ui.notesPanel.classList.contains("collab-notes-panel--minimized");
+    setNotesPanelMinimized(minimized);
   });
   ui.remoteMedia.addEventListener("dragover", handleRemoteGridDragOver);
   ui.remoteMedia.addEventListener("drop", handleRemoteGridDrop);
@@ -207,6 +227,9 @@
     if (state.mediaMeshTimer) {
       window.clearInterval(state.mediaMeshTimer);
     }
+    if (state.noteSyncTimer) {
+      window.clearTimeout(state.noteSyncTimer);
+    }
     if (state.reconnectTimer) {
       window.clearTimeout(state.reconnectTimer);
     }
@@ -216,6 +239,7 @@
     leaveMediaSession({ silent: true });
     endDockDrag();
     endMediaPanelDrag();
+    endNotesPanelDrag();
     window.removeEventListener("keydown", handleReadOnlyKeydown, true);
     window.removeEventListener("resize", renderRemoteHighlights);
     window.removeEventListener("scroll", renderRemoteHighlights, true);
@@ -291,6 +315,19 @@
     `;
     document.body.appendChild(mediaPanel);
 
+    const notesPanel = document.createElement("section");
+    notesPanel.className = "collab-notes-panel collab-notes-panel--visible";
+    notesPanel.innerHTML = `
+      <div class="collab-notes-panel__head">
+        <div class="collab-notes-panel__title">Shared Notes</div>
+        <button class="collab-notes-panel__toggle" type="button" aria-label="Minimize shared notes panel" title="Minimize">-</button>
+      </div>
+      <div class="collab-notes-panel__body">
+        <div class="collab-notes-panel__list"></div>
+      </div>
+    `;
+    document.body.appendChild(notesPanel);
+
     const readOnlyOverlay = document.createElement("div");
     readOnlyOverlay.className = "collab-readonly";
     readOnlyOverlay.hidden = true;
@@ -335,6 +372,10 @@
       localVideoCard: mediaPanel.querySelector(".collab-media-panel__card--local"),
       localVideo: mediaPanel.querySelector(".collab-media-panel__video--local"),
       remoteMedia: mediaPanel.querySelector(".collab-media-panel__remote-grid"),
+      notesPanel,
+      notesPanelHead: notesPanel.querySelector(".collab-notes-panel__head"),
+      notesPanelToggle: notesPanel.querySelector(".collab-notes-panel__toggle"),
+      notesList: notesPanel.querySelector(".collab-notes-panel__list"),
       readOnlyOverlay,
       readOnlyMessage: readOnlyOverlay.querySelector(".collab-readonly__message"),
       highlightLayer
@@ -554,6 +595,121 @@
     window.addEventListener("pointercancel", endMediaPanelDrag);
   }
 
+  function clampNotesPanelPosition(left, top) {
+    const rect = ui.notesPanel.getBoundingClientRect();
+    const maxLeft = Math.max(0, window.innerWidth - rect.width);
+    const maxTop = Math.max(0, window.innerHeight - rect.height);
+
+    return {
+      left: Math.min(Math.max(0, left), maxLeft),
+      top: Math.min(Math.max(0, top), maxTop)
+    };
+  }
+
+  function applyNotesPanelPosition(left, top) {
+    const next = clampNotesPanelPosition(left, top);
+    ui.notesPanel.style.left = `${next.left}px`;
+    ui.notesPanel.style.top = `${next.top}px`;
+    ui.notesPanel.style.right = "auto";
+    ui.notesPanel.style.bottom = "auto";
+  }
+
+  function persistNotesPanelPosition() {
+    localStorage.setItem(notesPanelPositionKey, JSON.stringify({
+      left: ui.notesPanel.style.left,
+      top: ui.notesPanel.style.top
+    }));
+  }
+
+  function restoreNotesPanelPosition() {
+    const raw = localStorage.getItem(notesPanelPositionKey);
+    if (!raw) {
+      return;
+    }
+
+    try {
+      const saved = JSON.parse(raw);
+      const left = Number.parseFloat(saved.left);
+      const top = Number.parseFloat(saved.top);
+      if (Number.isFinite(left) && Number.isFinite(top)) {
+        applyNotesPanelPosition(left, top);
+      }
+    } catch {
+      localStorage.removeItem(notesPanelPositionKey);
+    }
+  }
+
+  function setNotesPanelMinimized(minimized) {
+    ui.notesPanel.classList.toggle("collab-notes-panel--minimized", minimized);
+    ui.notesPanelToggle.textContent = minimized ? "+" : "-";
+    ui.notesPanelToggle.setAttribute("aria-label", minimized ? "Expand shared notes panel" : "Minimize shared notes panel");
+    ui.notesPanelToggle.title = minimized ? "Expand" : "Minimize";
+    localStorage.setItem(notesPanelMinimizedKey, minimized ? "1" : "0");
+  }
+
+  function moveNotesPanelWithPointer(clientX, clientY) {
+    applyNotesPanelPosition(clientX - state.notesDragOffsetX, clientY - state.notesDragOffsetY);
+  }
+
+  function onNotesPanelDragMove(event) {
+    if (event.pointerId !== state.notesDragPointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    moveNotesPanelWithPointer(event.clientX, event.clientY);
+  }
+
+  function endNotesPanelDrag(event) {
+    if (event && event.pointerId !== state.notesDragPointerId) {
+      return;
+    }
+
+    if (state.notesDragPointerId === null) {
+      return;
+    }
+
+    state.notesDragPointerId = null;
+    ui.notesPanel.classList.remove("collab-notes-panel--dragging");
+    window.removeEventListener("pointermove", onNotesPanelDragMove);
+    window.removeEventListener("pointerup", endNotesPanelDrag);
+    window.removeEventListener("pointercancel", endNotesPanelDrag);
+    persistNotesPanelPosition();
+  }
+
+  function beginNotesPanelDrag(event) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    if (event.target instanceof Element && event.target.closest("button, input, textarea, select, a, label")) {
+      return;
+    }
+
+    const rect = ui.notesPanel.getBoundingClientRect();
+    state.notesDragPointerId = event.pointerId;
+    state.notesDragOffsetX = event.clientX - rect.left;
+    state.notesDragOffsetY = event.clientY - rect.top;
+    ui.notesPanel.classList.add("collab-notes-panel--dragging");
+
+    window.addEventListener("pointermove", onNotesPanelDragMove);
+    window.addEventListener("pointerup", endNotesPanelDrag);
+    window.addEventListener("pointercancel", endNotesPanelDrag);
+  }
+
+  function fallbackNoteColor(clientId) {
+    const text = String(clientId || "");
+    let hash = 0;
+    for (let index = 0; index < text.length; index += 1) {
+      hash = (hash * 31 + text.charCodeAt(index)) % 360;
+    }
+    return `hsl(${hash} 72% 62%)`;
+  }
+
+  function getPeerNoteColor(clientId) {
+    return state.peers.find((peer) => peer.clientId === clientId)?.noteColor || fallbackNoteColor(clientId);
+  }
+
   function refreshConnectionStatus() {
     if (state.applyingRemote) {
       return;
@@ -731,6 +887,7 @@
     }
 
     renderRemoteMedia();
+    renderSharedNotes();
     updateMediaControls();
   }
 
@@ -762,6 +919,203 @@
       alert(error.message);
     } finally {
       renderRoomControl();
+    }
+  }
+
+  function sanitizeNoteText(value) {
+    return String(value || "").replace(/\r\n/g, "\n").slice(0, 4000);
+  }
+
+  function syncNotesFromPayload(entries = []) {
+    const nextNotes = new Map();
+
+    if (Array.isArray(entries)) {
+      entries.forEach((entry) => {
+        if (!entry || typeof entry.clientId !== "string") {
+          return;
+        }
+
+        nextNotes.set(entry.clientId, {
+          clientId: entry.clientId,
+          text: sanitizeNoteText(entry.text),
+          updatedAt: Number(entry.updatedAt) || 0
+        });
+      });
+    }
+
+    const ownRemote = nextNotes.get(state.clientId);
+    if (ownRemote && ownRemote.text === state.localNoteText) {
+      state.localNoteDirty = false;
+    } else if (state.localNoteDirty) {
+      nextNotes.set(state.clientId, {
+        clientId: state.clientId,
+        text: state.localNoteText,
+        updatedAt: Date.now()
+      });
+    } else if (ownRemote) {
+      state.localNoteText = ownRemote.text;
+    } else if (!state.localNoteDirty) {
+      state.localNoteText = "";
+    }
+
+    state.notes = nextNotes;
+    renderSharedNotes();
+  }
+
+  function ensureNoteCard(peerId) {
+    let card = state.noteCards.get(peerId);
+    if (card) {
+      return card;
+    }
+
+    const element = document.createElement("article");
+    element.className = "collab-notes-panel__card";
+    element.dataset.peerId = peerId;
+    element.innerHTML = `
+      <div class="collab-notes-panel__card-head">
+        <span class="collab-notes-panel__swatch"></span>
+        <div class="collab-notes-panel__card-title"></div>
+      </div>
+      <textarea class="collab-notes-panel__textarea" spellcheck="false"></textarea>
+    `;
+
+    const textarea = element.querySelector(".collab-notes-panel__textarea");
+    textarea.addEventListener("input", () => {
+      if (peerId !== state.clientId) {
+        return;
+      }
+
+      const text = sanitizeNoteText(textarea.value);
+      if (textarea.value !== text) {
+        textarea.value = text;
+      }
+      state.localNoteText = text;
+      state.localNoteDirty = true;
+      state.notes.set(state.clientId, {
+        clientId: state.clientId,
+        text,
+        updatedAt: Date.now()
+      });
+      scheduleNoteSync();
+    });
+    textarea.addEventListener("blur", () => {
+      if (peerId === state.clientId && state.localNoteDirty) {
+        scheduleNoteSync(true);
+      }
+    });
+
+    ui.notesList.appendChild(element);
+    card = {
+      element,
+      title: element.querySelector(".collab-notes-panel__card-title"),
+      textarea,
+      swatch: element.querySelector(".collab-notes-panel__swatch")
+    };
+    state.noteCards.set(peerId, card);
+    return card;
+  }
+
+  function removeNoteCard(peerId) {
+    const card = state.noteCards.get(peerId);
+    if (!card) {
+      return;
+    }
+
+    card.element.remove();
+    state.noteCards.delete(peerId);
+  }
+
+  function renderSharedNotes() {
+    const peers = state.peers.length > 0
+      ? state.peers
+      : [{
+        clientId: state.clientId,
+        name: state.name,
+        noteColor: getPeerNoteColor(state.clientId)
+      }];
+
+    const activePeerIds = new Set(peers.map((peer) => peer.clientId));
+    peers.forEach((peer) => {
+      const card = ensureNoteCard(peer.clientId);
+      const isSelf = peer.clientId === state.clientId;
+      const note = state.notes.get(peer.clientId);
+      const text = isSelf && state.localNoteDirty
+        ? state.localNoteText
+        : (note?.text || (isSelf ? state.localNoteText : ""));
+      const color = getPeerNoteColor(peer.clientId);
+
+      card.element.style.setProperty("--note-color", color);
+      card.title.textContent = isSelf ? `${peer.name || state.name} (you)` : (peer.name || getPeerName(peer.clientId));
+      card.textarea.readOnly = !isSelf;
+      card.textarea.placeholder = isSelf ? "Type shared notes for the room..." : "Waiting for notes...";
+      if (document.activeElement !== card.textarea || !isSelf) {
+        if (card.textarea.value !== text) {
+          card.textarea.value = text;
+        }
+      }
+      card.element.classList.toggle("collab-notes-panel__card--self", isSelf);
+    });
+
+    for (const peerId of [...state.noteCards.keys()]) {
+      if (!activePeerIds.has(peerId)) {
+        removeNoteCard(peerId);
+      }
+    }
+  }
+
+  function scheduleNoteSync(immediate = false) {
+    if (state.noteSyncTimer) {
+      window.clearTimeout(state.noteSyncTimer);
+    }
+
+    if (state.noteSyncInFlight && !immediate) {
+      return;
+    }
+
+    state.noteSyncTimer = window.setTimeout(() => {
+      state.noteSyncTimer = null;
+      sendNoteUpdate().catch((error) => {
+        console.error("Shared note sync failed:", error);
+      });
+    }, immediate ? 0 : noteSyncDelayMs);
+  }
+
+  async function sendNoteUpdate() {
+    if (state.noteSyncInFlight) {
+      scheduleNoteSync();
+      return;
+    }
+
+    state.noteSyncInFlight = true;
+    const text = state.localNoteText;
+
+    try {
+      const response = await fetch(`/api/collab/note/${encodeURIComponent(state.roomId)}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          clientId: state.clientId,
+          name: state.name,
+          text
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Note sync failed with ${response.status}`);
+      }
+
+      const payload = await response.json();
+      syncNotesFromPayload(payload.notes);
+    } finally {
+      state.noteSyncInFlight = false;
+      if (state.localNoteDirty) {
+        const serverText = state.notes.get(state.clientId)?.text || "";
+        if (serverText !== state.localNoteText) {
+          scheduleNoteSync();
+        }
+      }
     }
   }
 
@@ -2103,6 +2457,7 @@
     if (Array.isArray(payload.highlights)) {
       payload.highlights.forEach(applyHighlight);
     }
+    syncNotesFromPayload(payload.notes);
 
     if (payload.snapshot) {
           await applySnapshot(payload.snapshot, { force: true });
@@ -2140,6 +2495,7 @@
       if (Array.isArray(payload.highlights)) {
         payload.highlights.forEach(applyHighlight);
       }
+      syncNotesFromPayload(payload.notes);
 
       if (payload.snapshot) {
         await applySnapshot(payload.snapshot);
@@ -2228,6 +2584,15 @@
         applyHighlight(JSON.parse(event.data));
       } catch (error) {
         console.error("Highlight parse failed:", error);
+      }
+    });
+
+    source.addEventListener("notes", (event) => {
+      try {
+        markStreamActivity();
+        syncNotesFromPayload(JSON.parse(event.data));
+      } catch (error) {
+        console.error("Notes parse failed:", error);
       }
     });
   }

@@ -211,6 +211,15 @@
   display: block;
 }
 
+.collab-media-panel--minimized .collab-media-panel__body {
+  display: none;
+}
+
+.collab-media-panel--minimized .collab-media-panel__head {
+  margin-bottom: -14px;
+  border-bottom: 0;
+}
+
 .collab-media-panel--dragging {
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
 }
@@ -244,10 +253,30 @@
   color: #8aa4b3;
 }
 
+.collab-media-panel__toggle {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #eff7fb;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .collab-media-panel__grid,
 .collab-media-panel__remote-grid {
   display: grid;
   gap: 12px;
+}
+
+.collab-media-panel__grid {
+  align-items: start;
 }
 
 .collab-media-panel__remote-grid {
@@ -259,8 +288,22 @@
   gap: 8px;
 }
 
+.collab-media-panel__card--local {
+  width: min(156px, 40%);
+  justify-self: end;
+}
+
 .collab-media-panel__card--hidden {
   display: none;
+}
+
+.collab-media-panel__card--dragging {
+  opacity: 0.55;
+}
+
+.collab-media-panel__card--drop-target {
+  outline: 2px dashed rgba(124, 245, 191, 0.65);
+  outline-offset: 4px;
 }
 
 .collab-media-panel__video {
@@ -270,6 +313,10 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(0, 0, 0, 0.35);
   object-fit: cover;
+}
+
+.collab-media-panel__video--local {
+  aspect-ratio: 4 / 3;
 }
 
 .collab-media-panel__label {

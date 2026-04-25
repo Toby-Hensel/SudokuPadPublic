@@ -27,6 +27,8 @@
   const nameKey = "collab-display-name";
   const dockPositionKey = `collab-dock-position:${puzzleId}`;
   const mediaPanelPositionKey = `collab-media-panel-position:${puzzleId}`;
+  const mediaPanelMinimizedKey = `collab-media-panel-minimized:${puzzleId}`;
+  const mediaOrderKey = `collab-media-order:${roomId}`;
   const immediateBroadcastDelayMs = 45;
   const fallbackBroadcastDelayMs = 120;
   const syncMonitorIntervalMs = 250;
@@ -67,6 +69,15 @@
     iceServersFetchedAt: 0,
     peerConnections: new Map(),
     remoteTiles: new Map(),
+    remoteOrder: (() => {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(mediaOrderKey) || "[]");
+        return Array.isArray(parsed) ? parsed.filter((value) => typeof value === "string") : [];
+      } catch {
+        return [];
+      }
+    })(),
+    draggedRemotePeerId: null,
     dragPointerId: null,
     dragOffsetX: 0,
     dragOffsetY: 0,
@@ -86,6 +97,7 @@
   ui.nameInput.value = state.name;
   restoreDockPosition();
   restoreMediaPanelPosition();
+  setMediaPanelMinimized(localStorage.getItem(mediaPanelMinimizedKey) === "1");
   updateMediaControls();
 
   ui.copyButton.addEventListener("click", async () => {
@@ -108,6 +120,12 @@
   });
   ui.head.addEventListener("pointerdown", beginDockDrag);
   ui.mediaPanelHead.addEventListener("pointerdown", beginMediaPanelDrag);
+  ui.mediaPanelToggle.addEventListener("click", () => {
+    const minimized = !ui.mediaPanel.classList.contains("collab-media-panel--minimized");
+    setMediaPanelMinimized(minimized);
+  });
+  ui.remoteMedia.addEventListener("dragover", handleRemoteGridDragOver);
+  ui.remoteMedia.addEventListener("drop", handleRemoteGridDrop);
 
   ui.nameInput.addEventListener("change", () => {
     state.name = ui.nameInput.value.trim() || state.name;
@@ -210,6 +228,7 @@
     mediaPanel.innerHTML = `
       <div class="collab-media-panel__head">
         <div class="collab-media-panel__title">Camera Feeds</div>
+        <button class="collab-media-panel__toggle" type="button" aria-label="Minimize camera feeds panel" title="Minimize">-</button>
       </div>
       <div class="collab-media-panel__body">
         <div class="collab-media-panel__grid">
@@ -243,6 +262,7 @@
       leaveMediaButton: mediaActions.querySelectorAll(".collab-dock__button--secondary")[2],
       mediaPanel,
       mediaPanelHead: mediaPanel.querySelector(".collab-media-panel__head"),
+      mediaPanelToggle: mediaPanel.querySelector(".collab-media-panel__toggle"),
       localVideoCard: mediaPanel.querySelector(".collab-media-panel__card--local"),
       localVideo: mediaPanel.querySelector(".collab-media-panel__video--local"),
       remoteMedia: mediaPanel.querySelector(".collab-media-panel__remote-grid")
@@ -308,6 +328,18 @@
       left: ui.mediaPanel.style.left,
       top: ui.mediaPanel.style.top
     }));
+  }
+
+  function persistRemoteOrder() {
+    localStorage.setItem(mediaOrderKey, JSON.stringify(state.remoteOrder));
+  }
+
+  function setMediaPanelMinimized(minimized) {
+    ui.mediaPanel.classList.toggle("collab-media-panel--minimized", minimized);
+    ui.mediaPanelToggle.textContent = minimized ? "+" : "-";
+    ui.mediaPanelToggle.setAttribute("aria-label", minimized ? "Expand camera feeds panel" : "Minimize camera feeds panel");
+    ui.mediaPanelToggle.title = minimized ? "Expand" : "Minimize";
+    localStorage.setItem(mediaPanelMinimizedKey, minimized ? "1" : "0");
   }
 
   function restoreMediaPanelPosition() {
@@ -616,6 +648,13 @@
 
     const card = document.createElement("div");
     card.className = "collab-media-panel__card";
+    card.dataset.peerId = peerId;
+    card.draggable = true;
+    card.addEventListener("dragstart", handleRemoteTileDragStart);
+    card.addEventListener("dragend", handleRemoteTileDragEnd);
+    card.addEventListener("dragover", handleRemoteTileDragOver);
+    card.addEventListener("dragleave", handleRemoteTileDragLeave);
+    card.addEventListener("drop", handleRemoteTileDrop);
 
     const video = document.createElement("video");
     video.className = "collab-media-panel__video";
@@ -648,12 +687,105 @@
     tile.video.srcObject = null;
     tile.card.remove();
     state.remoteTiles.delete(peerId);
+    state.remoteOrder = state.remoteOrder.filter((candidate) => candidate !== peerId);
+    persistRemoteOrder();
   }
 
   function updateMediaPanelVisibility() {
     const hasRemoteTiles = [...state.remoteTiles.values()].some((tile) => tile.video.srcObject);
     const shouldShow = Boolean(state.localStream) || hasRemoteTiles;
     ui.mediaPanel.classList.toggle("collab-media-panel--visible", shouldShow);
+  }
+
+  function applyRemoteTileOrder() {
+    const availablePeerIds = [...state.remoteTiles.keys()];
+    state.remoteOrder = state.remoteOrder.filter((peerId) => availablePeerIds.includes(peerId));
+
+    for (const peerId of availablePeerIds) {
+      if (!state.remoteOrder.includes(peerId)) {
+        state.remoteOrder.push(peerId);
+      }
+    }
+
+    state.remoteOrder.forEach((peerId) => {
+      const tile = state.remoteTiles.get(peerId);
+      if (tile) {
+        ui.remoteMedia.appendChild(tile.card);
+      }
+    });
+
+    persistRemoteOrder();
+  }
+
+  function moveRemotePeerBefore(draggedPeerId, targetPeerId = null) {
+    const nextOrder = state.remoteOrder.filter((peerId) => peerId !== draggedPeerId);
+    if (targetPeerId && nextOrder.includes(targetPeerId)) {
+      const targetIndex = nextOrder.indexOf(targetPeerId);
+      nextOrder.splice(targetIndex, 0, draggedPeerId);
+    } else {
+      nextOrder.push(draggedPeerId);
+    }
+    state.remoteOrder = nextOrder;
+    applyRemoteTileOrder();
+  }
+
+  function handleRemoteTileDragStart(event) {
+    const card = event.currentTarget;
+    const peerId = card?.dataset.peerId;
+    if (!peerId) {
+      return;
+    }
+
+    state.draggedRemotePeerId = peerId;
+    card.classList.add("collab-media-panel__card--dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", peerId);
+  }
+
+  function handleRemoteTileDragEnd(event) {
+    state.draggedRemotePeerId = null;
+    event.currentTarget?.classList.remove("collab-media-panel__card--dragging");
+    ui.remoteMedia.querySelectorAll(".collab-media-panel__card--drop-target").forEach((card) => {
+      card.classList.remove("collab-media-panel__card--drop-target");
+    });
+  }
+
+  function handleRemoteTileDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    event.currentTarget?.classList.add("collab-media-panel__card--drop-target");
+  }
+
+  function handleRemoteTileDragLeave(event) {
+    event.currentTarget?.classList.remove("collab-media-panel__card--drop-target");
+  }
+
+  function handleRemoteTileDrop(event) {
+    event.preventDefault();
+    const targetPeerId = event.currentTarget?.dataset.peerId || null;
+    event.currentTarget?.classList.remove("collab-media-panel__card--drop-target");
+
+    if (!state.draggedRemotePeerId || state.draggedRemotePeerId === targetPeerId) {
+      return;
+    }
+
+    moveRemotePeerBefore(state.draggedRemotePeerId, targetPeerId);
+  }
+
+  function handleRemoteGridDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  function handleRemoteGridDrop(event) {
+    event.preventDefault();
+    if (!state.draggedRemotePeerId) {
+      return;
+    }
+
+    const dropTarget = event.target instanceof Element ? event.target.closest(".collab-media-panel__card") : null;
+    const targetPeerId = dropTarget?.dataset.peerId || null;
+    moveRemotePeerBefore(state.draggedRemotePeerId, targetPeerId);
   }
 
   function renderRemoteMedia() {
@@ -685,6 +817,7 @@
       }
     }
 
+    applyRemoteTileOrder();
     updateMediaPanelVisibility();
   }
 

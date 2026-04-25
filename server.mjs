@@ -58,6 +58,20 @@ function normalizePuzzleId(value) {
     .slice(0, 160);
 }
 
+function isLookupSafePuzzleId(value) {
+  const candidate = normalizePuzzleId(value);
+  return Boolean(candidate) && !/[\\/\s]/.test(candidate);
+}
+
+function getRoomPuzzleId(room) {
+  if (isLookupSafePuzzleId(room?.puzzleId)) {
+    return normalizePuzzleId(room.puzzleId);
+  }
+
+  const replayPuzzleId = normalizePuzzleId(room?.latest?.replay?.puzzleId || room?.latest?.puzzleId || "");
+  return isLookupSafePuzzleId(replayPuzzleId) ? replayPuzzleId : "";
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -1355,7 +1369,7 @@ async function handleRoomLookup(res, url, origin) {
     .replace(/[^a-z0-9_-]/g, "")
     .slice(0, 64);
   const room = roomId ? peekRoom(roomId) : null;
-  const puzzleId = room?.puzzleId || room?.latest?.puzzleId || room?.latest?.replay?.puzzleId || "";
+  const puzzleId = getRoomPuzzleId(room);
   const corsHeaders = {
     "access-control-allow-origin": "*"
   };
@@ -1473,7 +1487,9 @@ async function handleUpdate(req, res, url) {
     hash: nextHash,
     incomingHash
   };
-  room.puzzleId = normalizePuzzleId(nextReplay.puzzleId) || room.puzzleId;
+  if (!isLookupSafePuzzleId(room.puzzleId) && isLookupSafePuzzleId(nextReplay.puzzleId)) {
+    room.puzzleId = normalizePuzzleId(nextReplay.puzzleId);
+  }
   room.updatedAt = Date.now();
 
   broadcast(room, "snapshot", room.latest);

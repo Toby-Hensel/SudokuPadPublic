@@ -496,8 +496,8 @@ function renderCtcVideoCards(videos, options = {}) {
   if (!videos.length) {
     return `
       <div class="ctc-empty">
-        <strong>Latest uploads are loading awkwardly right now.</strong>
-        <div class="mini">The launch tools still work. Try refreshing in a moment and the feed should repopulate.</div>
+        <strong data-i18n="ctc.empty.title">Latest uploads are loading awkwardly right now.</strong>
+        <div class="mini" data-i18n="ctc.empty.body">The launch tools still work. Try refreshing in a moment and the feed should repopulate.</div>
       </div>
     `;
   }
@@ -509,13 +509,13 @@ function renderCtcVideoCards(videos, options = {}) {
       </a>
       <div class="video-card__body">
         <div class="video-card__meta">
-          <span class="video-card__badge">${video.hasSudokuPadUrl ? "SudokuPad linked" : "No SudokuPad link"}</span>
+          <span class="video-card__badge" data-i18n="${video.hasSudokuPadUrl ? "ctc.badge.linked" : "ctc.badge.unlinked"}">${video.hasSudokuPadUrl ? "SudokuPad linked" : "No SudokuPad link"}</span>
           <span>${escapeHtml(video.publishedLabel)}</span>
         </div>
         <h3>${escapeHtml(video.title)}</h3>
         <div class="video-card__actions">
-          <a class="video-card__button video-card__button--watch" href="${escapeHtml(video.youtubeUrl)}" target="_blank" rel="noreferrer">Watch on YouTube</a>
-          <button class="video-card__button video-card__button--play" type="button" data-ctc-puzzle-source="${escapeHtml(video.sudokuPadUrl)}">Create room from puzzle</button>
+          <a class="video-card__button video-card__button--watch" href="${escapeHtml(video.youtubeUrl)}" target="_blank" rel="noreferrer" data-i18n="ctc.watch">Watch on YouTube</a>
+          <button class="video-card__button video-card__button--play" type="button" data-ctc-puzzle-source="${escapeHtml(video.sudokuPadUrl)}" data-i18n="ctc.createRoom">Create room from puzzle</button>
         </div>
       </div>
     </article>
@@ -1514,7 +1514,11 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
               <span class="theme-toggle__icon" id="theme-toggle-icon">☀</span>
               <span id="theme-toggle-label">Light mode</span>
             </button>
-            <a class="section-link" href="https://www.youtube.com/channel/UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer">Cracking the Cryptic on YouTube</a>
+            <button class="theme-toggle" id="language-toggle" type="button" aria-label="Canvia a català">
+              <span class="theme-toggle__icon" id="language-toggle-icon">CA</span>
+              <span id="language-toggle-label">Català</span>
+            </button>
+            <a class="section-link" href="https://www.youtube.com/channel/UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer" data-i18n="topbar.youtube">Cracking the Cryptic on YouTube</a>
           </div>
         </div>
 
@@ -1522,19 +1526,19 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           <div class="hero-copy">
             <div class="hero-copy__top">
               <div>
-                <h1>Latest Cracking the Cryptic puzzle links.</h1>
-                <p class="lede">
+                <h1 data-i18n="hero.title">Latest Cracking the Cryptic puzzle links.</h1>
+                <p class="lede" data-i18n="hero.lede">
                   The newest five official uploads that include a SudokuPad link are now right at the top. Each one opens a fresh collaboration room immediately, or into a named room if you set one first.
                 </p>
               </div>
-              <a class="section-link" href="https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer">Official upload feed</a>
+              <a class="section-link" href="https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer" data-i18n="hero.feed">Official upload feed</a>
             </div>
             <div class="hero-copy__tools">
               <label>
-                Room name for Cracking the Cryptic links (optional)
-                <input id="ctc-room" name="ctc-room" placeholder="leave blank for a fresh private room" autocomplete="off">
+                <span data-i18n="hero.ctcRoom.label">Room name for Cracking the Cryptic links (optional)</span>
+                <input id="ctc-room" name="ctc-room" placeholder="leave blank for a fresh private room" autocomplete="off" data-i18n-placeholder="hero.ctcRoom.placeholder">
               </label>
-              <div class="mini">When filled in, every Create room from puzzle button above will use this room name instead of creating a random one.</div>
+              <div class="mini" data-i18n="hero.ctcRoom.note">When filled in, every Create room from puzzle button above will use this room name instead of creating a random one.</div>
             </div>
             <div class="hero-feed">
               ${renderCtcVideoCards(ctcVideos, { compact: true })}
@@ -1543,53 +1547,53 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
 
           <div class="launch-card">
             <div>
-              <div class="launch-card__title">Launch A Room</div>
+              <div class="launch-card__title" data-i18n="launch.title">Launch A Room</div>
               <p class="launch-card__note">Paste a SudokuPad URL or short puzzle ID. I’ll generate a collaboration link on the correct host for sharing.</p>
             </div>
             <form id="launch-form">
               <label>
-                SudokuPad link or ID
-                <input id="source" name="source" placeholder="https://sudokupad.app/94Qq6qGjh2" autocomplete="off">
+                <span data-i18n="launch.source.label">SudokuPad link or ID</span>
+                <input id="source" name="source" placeholder="https://sudokupad.app/94Qq6qGjh2" autocomplete="off" data-i18n-placeholder="launch.source.placeholder">
               </label>
               <label>
-                Room name (optional)
-                <input id="room" name="room" placeholder="leave blank to create a fresh private room" autocomplete="off">
+                <span data-i18n="launch.room.label">Room name (optional)</span>
+                <input id="room" name="room" placeholder="leave blank to create a fresh private room" autocomplete="off" data-i18n-placeholder="launch.room.placeholder">
               </label>
               <div class="actions">
-                <button class="primary" type="submit">Create collaboration link</button>
-                <button class="secondary" type="button" id="open-public">Use shared puzzle room</button>
+                <button class="primary" type="submit" data-i18n="launch.actions.create">Create collaboration link</button>
+                <button class="secondary" type="button" id="open-public" data-i18n="launch.actions.shared">Use shared puzzle room</button>
               </div>
             </form>
             <div class="output" id="output">
-              <strong>Your collaboration link</strong>
+              <strong data-i18n="launch.output.title">Your collaboration link</strong>
               <a id="result-link" href="#"></a>
               <div class="actions">
-                <button class="secondary" type="button" id="copy-link">Copy link</button>
-                <button class="primary" type="button" id="open-link">Open room</button>
+                <button class="secondary" type="button" id="copy-link" data-i18n="launch.output.copy">Copy link</button>
+                <button class="primary" type="button" id="open-link" data-i18n="launch.output.open">Open room</button>
               </div>
             </div>
             <div class="launch-panel">
               <div>
-                <div class="launch-card__title">Join Existing Room</div>
-                <p class="launch-card__note">Type the room name someone else created and jump straight into that shared puzzle.</p>
+                <div class="launch-card__title" data-i18n="join.title">Join Existing Room</div>
+                <p class="launch-card__note" data-i18n="join.note">Type the room name someone else created and jump straight into that shared puzzle.</p>
               </div>
               <form id="join-form">
                 <label>
-                  Room name
-                  <input id="join-room" name="join-room" placeholder="for example: streamparty" autocomplete="off">
+                  <span data-i18n="join.room.label">Room name</span>
+                  <input id="join-room" name="join-room" placeholder="for example: streamparty" autocomplete="off" data-i18n-placeholder="join.room.placeholder">
                 </label>
                 <div class="actions">
-                  <button class="secondary" type="submit" id="join-room-button">Join room</button>
+                  <button class="secondary" type="submit" id="join-room-button" data-i18n="join.actions.submit">Join room</button>
                 </div>
               </form>
-              <div class="mini">Use the room name from the end of a shared collaboration link, after <code>?room=</code>.</div>
+              <div class="mini" data-i18n="join.help">Use the room name from the end of a shared collaboration link, after <code>?room=</code>.</div>
             </div>
           </div>
         </div>
       </section>
 
       <div class="footer">
-        Collaboration origin: <code>${escapeHtml(preferredOrigin)}</code>
+        <span data-i18n="footer.origin">Collaboration origin:</span> <code>${escapeHtml(preferredOrigin)}</code>
       </div>
     </main>
 
@@ -1609,6 +1613,111 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         const themeToggleButton = document.getElementById("theme-toggle");
         const themeToggleIcon = document.getElementById("theme-toggle-icon");
         const themeToggleLabel = document.getElementById("theme-toggle-label");
+        const languageToggleButton = document.getElementById("language-toggle");
+        const languageToggleIcon = document.getElementById("language-toggle-icon");
+        const languageToggleLabel = document.getElementById("language-toggle-label");
+        const translations = {
+          en: {
+            "topbar.youtube": "Cracking the Cryptic on YouTube",
+            "hero.title": "Latest Cracking the Cryptic puzzle links.",
+            "hero.lede": "The newest five official uploads that include a SudokuPad link are now right at the top. Each one opens a fresh collaboration room immediately, or into a named room if you set one first.",
+            "hero.feed": "Official upload feed",
+            "hero.ctcRoom.label": "Room name for Cracking the Cryptic links (optional)",
+            "hero.ctcRoom.placeholder": "leave blank for a fresh private room",
+            "hero.ctcRoom.note": "When filled in, every Create room from puzzle button above will use this room name instead of creating a random one.",
+            "ctc.empty.title": "Latest uploads are loading awkwardly right now.",
+            "ctc.empty.body": "The launch tools still work. Try refreshing in a moment and the feed should repopulate.",
+            "ctc.badge.linked": "SudokuPad linked",
+            "ctc.badge.unlinked": "No SudokuPad link",
+            "ctc.watch": "Watch on YouTube",
+            "ctc.createRoom": "Create room from puzzle",
+            "launch.title": "Launch A Room",
+            "launch.note": "Paste a SudokuPad URL or short puzzle ID. I'll generate a collaboration link on the correct host for sharing.",
+            "launch.source.label": "SudokuPad link or ID",
+            "launch.source.placeholder": "https://sudokupad.app/94Qq6qGjh2",
+            "launch.room.label": "Room name (optional)",
+            "launch.room.placeholder": "leave blank to create a fresh private room",
+            "launch.actions.create": "Create collaboration link",
+            "launch.actions.shared": "Use shared puzzle room",
+            "launch.output.title": "Your collaboration link",
+            "launch.output.copy": "Copy link",
+            "launch.output.open": "Open room",
+            "join.title": "Join Existing Room",
+            "join.note": "Type the room name someone else created and jump straight into that shared puzzle.",
+            "join.room.label": "Room name",
+            "join.room.placeholder": "for example: streamparty",
+            "join.actions.submit": "Join room",
+            "join.help": "Use the room name from the end of a shared collaboration link, after <code>?room=</code>.",
+            "footer.origin": "Collaboration origin:",
+            "alerts.sourceRequired": "Please enter a SudokuPad link or puzzle ID.",
+            "alerts.roomRequired": "Please enter a room name.",
+            "alerts.roomMissing": "Could not find that room.",
+            "alerts.roomNotReady": "That room is not ready yet.",
+            "lang.label.en": "English",
+            "lang.label.ca": "Català",
+            "lang.aria.en": "Switch to English",
+            "lang.aria.ca": "Canvia a català",
+            "theme.label.light": "Light mode",
+            "theme.label.dark": "Dark mode",
+            "theme.aria.light": "Switch to light mode",
+            "theme.aria.dark": "Switch to dark mode",
+            "copy.copied": "Copied",
+            "join.loading": "Joining..."
+          },
+          ca: {
+            "topbar.youtube": "Cracking the Cryptic a YouTube",
+            "hero.title": "Últims enllaços de puzzles de Cracking the Cryptic.",
+            "hero.lede": "Els cinc uploads oficials més recents que inclouen un enllaç de SudokuPad apareixen aquí mateix. Cadascun obre immediatament una sala de col·laboració nova, o bé una sala amb nom si primer n'escrius un.",
+            "hero.feed": "Feed oficial d'uploads",
+            "hero.ctcRoom.label": "Nom de la sala per als enllaços de Cracking the Cryptic (opcional)",
+            "hero.ctcRoom.placeholder": "deixa-ho en blanc per crear una sala privada nova",
+            "hero.ctcRoom.note": "Si l'omples, tots els botons de crear sala del puzzle de dalt faran servir aquest nom de sala en lloc de crear-ne un d'aleatori.",
+            "ctc.empty.title": "Ara mateix els últims uploads s'estan carregant de manera estranya.",
+            "ctc.empty.body": "Les eines per obrir sales continuen funcionant. Torna a refrescar d'aquí a un moment i el feed s'hauria de tornar a omplir.",
+            "ctc.badge.linked": "Amb enllaç de SudokuPad",
+            "ctc.badge.unlinked": "Sense enllaç de SudokuPad",
+            "ctc.watch": "Mira-ho a YouTube",
+            "ctc.createRoom": "Crea sala des del puzzle",
+            "launch.title": "Obre una sala",
+            "launch.note": "Enganxa un URL de SudokuPad o un ID curt del puzzle. Generaré un enllaç de col·laboració al servidor correcte per compartir-lo.",
+            "launch.source.label": "Enllaç o ID de SudokuPad",
+            "launch.source.placeholder": "https://sudokupad.app/94Qq6qGjh2",
+            "launch.room.label": "Nom de la sala (opcional)",
+            "launch.room.placeholder": "deixa-ho en blanc per crear una sala privada nova",
+            "launch.actions.create": "Crea enllaç de col·laboració",
+            "launch.actions.shared": "Fes servir la sala compartida del puzzle",
+            "launch.output.title": "El teu enllaç de col·laboració",
+            "launch.output.copy": "Copia l'enllaç",
+            "launch.output.open": "Obre la sala",
+            "join.title": "Uneix-te a una sala existent",
+            "join.note": "Escriu el nom de la sala que ha creat una altra persona i entra directament en aquell puzzle compartit.",
+            "join.room.label": "Nom de la sala",
+            "join.room.placeholder": "per exemple: streamparty",
+            "join.actions.submit": "Uneix-m'hi",
+            "join.help": "Fes servir el nom de la sala que surt al final d'un enllaç de col·laboració compartit, després de <code>?room=</code>.",
+            "footer.origin": "Origen de col·laboració:",
+            "alerts.sourceRequired": "Introdueix un enllaç o un ID de SudokuPad.",
+            "alerts.roomRequired": "Introdueix un nom de sala.",
+            "alerts.roomMissing": "No s'ha pogut trobar aquesta sala.",
+            "alerts.roomNotReady": "Aquesta sala encara no està preparada.",
+            "lang.label.en": "English",
+            "lang.label.ca": "Català",
+            "lang.aria.en": "Switch to English",
+            "lang.aria.ca": "Canvia a català",
+            "theme.label.light": "Mode clar",
+            "theme.label.dark": "Mode fosc",
+            "theme.aria.light": "Canvia al mode clar",
+            "theme.aria.dark": "Canvia al mode fosc",
+            "copy.copied": "Copiat",
+            "join.loading": "Connectant..."
+          }
+        };
+        const storedLanguage = localStorage.getItem("landing-language");
+        let currentLanguage = storedLanguage === "ca" ? "ca" : "en";
+
+        function getTranslation(key) {
+          return translations[currentLanguage]?.[key] || translations.en[key] || key;
+        }
 
         function extractPuzzleId(value) {
           const raw = String(value || "").trim();
@@ -1642,8 +1751,8 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           const nextTheme = theme === "light" ? "light" : "dark";
           document.documentElement.dataset.theme = nextTheme;
           themeToggleIcon.textContent = nextTheme === "light" ? "☾" : "☀";
-          themeToggleLabel.textContent = nextTheme === "light" ? "Dark mode" : "Light mode";
-          themeToggleButton.setAttribute("aria-label", nextTheme === "light" ? "Switch to dark mode" : "Switch to light mode");
+          themeToggleLabel.textContent = nextTheme === "light" ? getTranslation("theme.label.dark") : getTranslation("theme.label.light");
+          themeToggleButton.setAttribute("aria-label", nextTheme === "light" ? getTranslation("theme.aria.dark") : getTranslation("theme.aria.light"));
         }
 
         function toggleTheme() {
@@ -1653,10 +1762,35 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           localStorage.setItem("landing-theme", nextTheme);
         }
 
+        function applyLanguage(language) {
+          currentLanguage = language === "ca" ? "ca" : "en";
+          document.documentElement.lang = currentLanguage;
+          localStorage.setItem("landing-language", currentLanguage);
+          document.querySelectorAll("[data-i18n]").forEach((element) => {
+            element.innerHTML = getTranslation(element.dataset.i18n);
+          });
+          document.querySelectorAll("[data-i18n-placeholder]").forEach((element) => {
+            element.setAttribute("placeholder", getTranslation(element.dataset.i18nPlaceholder));
+          });
+          const launchNotes = document.querySelectorAll(".launch-card__note");
+          if (launchNotes[0]) {
+            launchNotes[0].textContent = getTranslation("launch.note");
+          }
+          const nextLanguage = currentLanguage === "en" ? "ca" : "en";
+          languageToggleIcon.textContent = nextLanguage === "ca" ? "CA" : "EN";
+          languageToggleLabel.textContent = getTranslation("lang.label." + nextLanguage);
+          languageToggleButton.setAttribute("aria-label", getTranslation("lang.aria." + nextLanguage));
+          applyTheme(document.documentElement.dataset.theme);
+        }
+
+        function toggleLanguage() {
+          applyLanguage(currentLanguage === "en" ? "ca" : "en");
+        }
+
         function buildLinkFromSource(source, { usePuzzleRoom, roomValue } = {}) {
           const puzzleId = extractPuzzleId(source);
           if (!puzzleId) {
-            throw new Error("Please enter a SudokuPad link or puzzle ID.");
+            throw new Error(getTranslation("alerts.sourceRequired"));
           }
 
           const room = usePuzzleRoom
@@ -1691,18 +1825,18 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           const room = slugifyRoom(joinRoomInput.value);
           if (!room) {
             joinRoomInput.focus();
-            throw new Error("Please enter a room name.");
+            throw new Error(getTranslation("alerts.roomRequired"));
           }
 
           const response = await fetch(origin + "/api/collab/lookup/" + encodeURIComponent(room));
           const payload = await response.json().catch(() => ({}));
 
           if (!response.ok) {
-            throw new Error(payload.error || "Could not find that room.");
+            throw new Error(payload.error || getTranslation("alerts.roomMissing"));
           }
 
           if (!payload.inviteLink) {
-            throw new Error("That room is not ready yet.");
+            throw new Error(getTranslation("alerts.roomNotReady"));
           }
 
           window.location.href = payload.inviteLink;
@@ -1728,9 +1862,9 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         copyLinkButton.addEventListener("click", async () => {
           if (!resultLink.href) return;
           await navigator.clipboard.writeText(resultLink.href);
-          copyLinkButton.textContent = "Copied";
+          copyLinkButton.textContent = getTranslation("copy.copied");
           setTimeout(() => {
-            copyLinkButton.textContent = "Copy link";
+            copyLinkButton.textContent = getTranslation("launch.output.copy");
           }, 1200);
         });
 
@@ -1744,7 +1878,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           event.preventDefault();
           joinRoomButton.disabled = true;
           const originalLabel = joinRoomButton.textContent;
-          joinRoomButton.textContent = "Joining...";
+          joinRoomButton.textContent = getTranslation("join.loading");
           try {
             await joinExistingRoom();
           } catch (error) {
@@ -1756,6 +1890,8 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         });
 
         themeToggleButton.addEventListener("click", toggleTheme);
+        languageToggleButton.addEventListener("click", toggleLanguage);
+        applyLanguage(currentLanguage);
         applyTheme(document.documentElement.dataset.theme);
 
         document.querySelectorAll("[data-ctc-puzzle-source]").forEach((button) => {

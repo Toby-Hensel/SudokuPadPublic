@@ -1600,6 +1600,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
     <script>
       (() => {
         const origin = ${JSON.stringify(preferredOrigin)};
+        const pageOrigin = window.location.origin;
         const sourceInput = document.getElementById("source");
         const roomInput = document.getElementById("room");
         const ctcRoomInput = document.getElementById("ctc-room");
@@ -1828,18 +1829,27 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
             throw new Error(getTranslation("alerts.roomRequired"));
           }
 
-          const response = await fetch(origin + "/api/collab/lookup/" + encodeURIComponent(room));
-          const payload = await response.json().catch(() => ({}));
+          const lookupOrigins = [...new Set([origin, pageOrigin].filter(Boolean))];
+          let lastPayload = {};
 
-          if (!response.ok) {
-            throw new Error(payload.error || getTranslation("alerts.roomMissing"));
+          for (const lookupOrigin of lookupOrigins) {
+            const response = await fetch(lookupOrigin + "/api/collab/lookup/" + encodeURIComponent(room));
+            const payload = await response.json().catch(() => ({}));
+            lastPayload = payload;
+
+            if (!response.ok) {
+              continue;
+            }
+
+            if (!payload.inviteLink) {
+              throw new Error(getTranslation("alerts.roomNotReady"));
+            }
+
+            window.location.href = payload.inviteLink;
+            return;
           }
 
-          if (!payload.inviteLink) {
-            throw new Error(getTranslation("alerts.roomNotReady"));
-          }
-
-          window.location.href = payload.inviteLink;
+          throw new Error(lastPayload.error || getTranslation("alerts.roomMissing"));
         }
 
         document.getElementById("launch-form").addEventListener("submit", (event) => {

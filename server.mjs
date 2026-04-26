@@ -15,7 +15,10 @@ const host = process.env.HOST || "0.0.0.0";
 const upstreamOrigin = process.env.UPSTREAM_ORIGIN || "https://sudokupad.app";
 const assetVersion = process.env.RENDER_GIT_COMMIT || "dev";
 const publicAppOrigin = process.env.PUBLIC_APP_ORIGIN || "https://sudokupad-party.onrender.com";
-const ctcFeedUrl = process.env.CTC_FEED_URL || "https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q";
+const ctcChannelId = process.env.CTC_CHANNEL_ID || "UCC-UOdK8-mIjxBQm_ot1T-Q";
+const ctcFeedUrl = process.env.CTC_FEED_URL || `https://www.youtube.com/feeds/videos.xml?channel_id=${ctcChannelId}`;
+const youtubeHomeUrl = "https://www.youtube.com/?hl=en";
+const youtubeConsentCookie = process.env.YOUTUBE_CONSENT_COOKIE || "CONSENT=YES+cb.20210328-17-p0.en+FX+667";
 const defaultIceServers = [
   { urls: ["stun:stun.l.google.com:19302"] }
 ];
@@ -205,11 +208,97 @@ function formatPublishedDate(isoString) {
   }
 }
 
-async function fetchLatestCtcVideos(limit = 5) {
-  if (Date.now() < ctcFeedCache.expiresAt && ctcFeedCache.videos.length >= limit) {
-    return ctcFeedCache.videos.slice(0, limit);
+function getYouTubeRequestHeaders() {
+  return {
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    cookie: youtubeConsentCookie,
+    "accept-language": "en-US,en;q=0.9"
+  };
+}
+
+function readRunText(value) {
+  if (!value || typeof value !== "object") {
+    return "";
   }
 
+  if (typeof value.simpleText === "string") {
+    return value.simpleText;
+  }
+
+  if (Array.isArray(value.runs)) {
+    return value.runs.map((run) => String(run?.text || "")).join("").trim();
+  }
+
+  return "";
+}
+
+function collectVideoRenderers(value, renderers = []) {
+  if (!value || typeof value !== "object") {
+    return renderers;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectVideoRenderers(item, renderers));
+    return renderers;
+  }
+
+  if (value.videoRenderer && typeof value.videoRenderer === "object") {
+    renderers.push(value.videoRenderer);
+  }
+
+  for (const nested of Object.values(value)) {
+    collectVideoRenderers(nested, renderers);
+  }
+
+  return renderers;
+}
+
+async function fetchYouTubeClientConfig() {
+  const response = await fetch(youtubeHomeUrl, {
+    headers: getYouTubeRequestHeaders()
+  });
+
+  if (!response.ok) {
+    throw new Error(`YouTube home request failed with ${response.status}`);
+  }
+
+  const html = await response.text();
+  const apiKey = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1];
+  const clientVersion = html.match(/"INNERTUBE_CONTEXT_CLIENT_VERSION":"([^"]+)"/)?.[1];
+
+  if (!apiKey || !clientVersion) {
+    throw new Error("Could not read YouTube client config.");
+  }
+
+  return {
+    apiKey,
+    clientVersion
+  };
+}
+
+async function fetchCtcVideoDescription(videoId) {
+  const response = await fetch(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&hl=en`, {
+    headers: getYouTubeRequestHeaders()
+  });
+
+  if (!response.ok) {
+    throw new Error(`YouTube watch request failed with ${response.status} for ${videoId}`);
+  }
+
+  const html = await response.text();
+  const rawDescription = html.match(/"shortDescription":"([\s\S]*?)","isCrawlable":/)?.[1];
+  if (!rawDescription) {
+    return "";
+  }
+
+  try {
+    return JSON.parse(`"${rawDescription}"`);
+  } catch {
+    return rawDescription.replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+}
+
+async function fetchLatestCtcVideosFromFeed(limit = 5) {
   const response = await fetch(ctcFeedUrl, {
     headers: {
       "user-agent": "SudokuPad Party Landing Page"
@@ -248,6 +337,111 @@ async function fetchLatestCtcVideos(limit = 5) {
   ctcFeedCache.expiresAt = Date.now() + 10 * 60 * 1000;
 
   return videos;
+}
+
+async function fetchLatestCtcVideosFromYouTube(limit = 5) {
+  const { apiKey, clientVersion } = await fetchYouTubeClientConfig();
+  const response = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(apiKey)}`, {
+    method: "POST",
+    headers: {
+      ...getYouTubeRequestHeaders(),
+      "content-type": "application/json; charset=utf-8"
+    },
+    body: JSON.stringify({
+      context: {
+        client: {
+          clientName: "WEB",
+          clientVersion,
+          hl: "en",
+          gl: "US"
+        }
+      },
+      browseId: ctcChannelId,
+      params: "EgZ2aWRlb3PyBgQKAjoA"
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`YouTube browse request failed with ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const renderers = collectVideoRenderers(payload);
+  const seenVideoIds = new Set();
+  const videos = [];
+
+  for (const renderer of renderers) {
+    const videoId = String(renderer?.videoId || "").trim();
+    if (!videoId || seenVideoIds.has(videoId)) {
+      continue;
+    }
+    seenVideoIds.add(videoId);
+
+    const title = readRunText(renderer.title);
+    const publishedLabel = readRunText(renderer.publishedTimeText);
+    const thumbnailUrl = Array.isArray(renderer.thumbnail?.thumbnails)
+      ? String(renderer.thumbnail.thumbnails.at(-1)?.url || renderer.thumbnail.thumbnails[0]?.url || "")
+      : "";
+    const youtubeUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+    let description = readRunText(renderer.descriptionSnippet);
+    let sudokuPadUrl = extractSudokuPadUrl(description);
+
+    if (!sudokuPadUrl) {
+      description = await fetchCtcVideoDescription(videoId);
+      sudokuPadUrl = extractSudokuPadUrl(description);
+    }
+
+    if (!sudokuPadUrl) {
+      continue;
+    }
+
+    videos.push({
+      title,
+      youtubeUrl,
+      publishedAt: "",
+      publishedLabel: publishedLabel || "",
+      thumbnailUrl,
+      sudokuPadUrl,
+      hasSudokuPadUrl: true
+    });
+
+    if (videos.length >= limit) {
+      break;
+    }
+  }
+
+  return videos;
+}
+
+async function fetchLatestCtcVideos(limit = 5) {
+  if (Date.now() < ctcFeedCache.expiresAt && ctcFeedCache.videos.length >= limit) {
+    return ctcFeedCache.videos.slice(0, limit);
+  }
+
+  try {
+    const videos = await fetchLatestCtcVideosFromFeed(limit);
+    if (videos.length >= limit) {
+      ctcFeedCache.videos = videos;
+      ctcFeedCache.lastFetchedAt = new Date().toISOString();
+      ctcFeedCache.expiresAt = Date.now() + 10 * 60 * 1000;
+      return videos;
+    }
+  } catch {
+    // Fall through to the more resilient YouTube browse/watch strategy.
+  }
+
+  try {
+    const videos = await fetchLatestCtcVideosFromYouTube(limit);
+    ctcFeedCache.videos = videos;
+    ctcFeedCache.lastFetchedAt = new Date().toISOString();
+    ctcFeedCache.expiresAt = Date.now() + 10 * 60 * 1000;
+    return videos;
+  } catch (error) {
+    if (ctcFeedCache.videos.length >= limit) {
+      return ctcFeedCache.videos.slice(0, limit);
+    }
+    throw error;
+  }
 }
 
 function renderCtcVideoCards(videos, options = {}) {

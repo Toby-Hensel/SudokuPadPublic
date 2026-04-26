@@ -36,6 +36,8 @@
   const syncMonitorIntervalMs = 250;
   const snapshotPollIntervalMs = 500;
   const noteSyncDelayMs = 160;
+  const defaultCollabFetchTimeoutMs = 12_000;
+  const syncFetchTimeoutMs = 10_000;
 
   const state = {
     roomId,
@@ -903,13 +905,34 @@
     updateMediaControls();
   }
 
+  async function collabFetch(url, options = {}, timeoutMs = defaultCollabFetchTimeoutMs) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error(`Request timed out after ${timeoutMs}ms.`);
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
   async function submitRoomControl(payload, button) {
     if (button) {
       button.disabled = true;
     }
 
     try {
-      const response = await fetch(`/api/collab/control/${encodeURIComponent(state.roomId)}`, {
+      const response = await collabFetch(`/api/collab/control/${encodeURIComponent(state.roomId)}`, {
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -1102,7 +1125,7 @@
     const text = state.localNoteText;
 
     try {
-      const response = await fetch(`/api/collab/note/${encodeURIComponent(state.roomId)}`, {
+      const response = await collabFetch(`/api/collab/note/${encodeURIComponent(state.roomId)}`, {
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -1307,7 +1330,7 @@
     const col = Math.max(0, Math.min(cols - 1, Math.floor(((event.clientX - boardRect.left) / boardRect.width) * cols)));
 
     try {
-      await fetch(`/api/collab/highlight/${encodeURIComponent(state.roomId)}`, {
+      await collabFetch(`/api/collab/highlight/${encodeURIComponent(state.roomId)}`, {
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -1835,10 +1858,10 @@
   }
 
   async function sendCallSignal(targetClientId, signalType, payload) {
-    const response = await fetch(`/api/collab/call/${encodeURIComponent(state.roomId)}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json"
+      const response = await collabFetch(`/api/collab/call/${encodeURIComponent(state.roomId)}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
       },
       body: JSON.stringify({
         clientId: state.clientId,
@@ -2299,7 +2322,7 @@
   }
 
   async function registerRoom() {
-    const response = await fetch(`/api/collab/register/${encodeURIComponent(state.roomId)}`, {
+    const response = await collabFetch(`/api/collab/register/${encodeURIComponent(state.roomId)}`, {
       method: "POST",
       headers: {
         "content-type": "application/json"
@@ -2333,7 +2356,7 @@
 
       state.inFlightHash = hash;
 
-      const response = await fetch(`/api/collab/update/${encodeURIComponent(state.roomId)}`, {
+      const response = await collabFetch(`/api/collab/update/${encodeURIComponent(state.roomId)}`, {
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -2390,7 +2413,7 @@
 
   async function sendPresence() {
     try {
-      const response = await fetch(`/api/collab/presence/${encodeURIComponent(state.roomId)}`, {
+      const response = await collabFetch(`/api/collab/presence/${encodeURIComponent(state.roomId)}`, {
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -2408,6 +2431,7 @@
       }
     } catch (error) {
       console.error("Presence update failed:", error);
+      scheduleReconnect("Reconnecting");
     }
   }
 
@@ -2482,7 +2506,7 @@
   }
 
   async function fetchInitialSnapshot() {
-    const response = await fetch(`/api/collab/sync/${encodeURIComponent(state.roomId)}?clientId=${encodeURIComponent(state.clientId)}`);
+    const response = await collabFetch(`/api/collab/sync/${encodeURIComponent(state.roomId)}?clientId=${encodeURIComponent(state.clientId)}`, {}, syncFetchTimeoutMs);
     if (!response.ok) {
       throw new Error(`Initial sync failed with ${response.status}`);
     }
@@ -2515,11 +2539,11 @@
     state.syncRequestInFlight = true;
 
     try {
-      const response = await fetch(`/api/collab/sync/${encodeURIComponent(state.roomId)}?clientId=${encodeURIComponent(state.clientId)}`, {
+      const response = await collabFetch(`/api/collab/sync/${encodeURIComponent(state.roomId)}?clientId=${encodeURIComponent(state.clientId)}`, {
         headers: {
           "cache-control": "no-store"
         }
-      });
+      }, syncFetchTimeoutMs);
 
       if (!response.ok) {
         throw new Error(`Snapshot poll failed with ${response.status}`);
@@ -2542,6 +2566,7 @@
     } catch (error) {
       state.pollHealthy = false;
       refreshConnectionStatus();
+      scheduleReconnect("Reconnecting");
       if (!silent) {
         throw error;
       }

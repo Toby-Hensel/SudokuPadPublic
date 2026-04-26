@@ -64,6 +64,7 @@
     syncRequestInFlight: false,
     pollHealthy: false,
     peers: [],
+    controlRevision: 0,
     control: {
       hostClientId: null,
       controllerClientId: null,
@@ -730,6 +731,7 @@
       hostClientId: typeof control?.hostClientId === "string" ? control.hostClientId : null,
       controllerClientId: typeof control?.controllerClientId === "string" ? control.controllerClientId : null,
       freeForAll: control?.freeForAll === true,
+      revision: Math.max(0, Number(control?.revision) || 0),
       accessRequests: Array.isArray(control?.accessRequests)
         ? control.accessRequests
           .map((entry) => typeof entry?.clientId === "string"
@@ -832,7 +834,17 @@
   }
 
   function applyControlState(control) {
-    state.control = normalizeControl(control);
+    if (!control) {
+      return;
+    }
+
+    const nextControl = normalizeControl(control);
+    if (nextControl.revision < state.controlRevision) {
+      return;
+    }
+
+    state.controlRevision = nextControl.revision;
+    state.control = nextControl;
     renderRoomControl();
   }
 

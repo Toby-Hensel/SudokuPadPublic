@@ -607,6 +607,8 @@ function getRoom(roomId) {
       controllerClientId: null,
       freeForAll: false,
       accessRequests: [],
+      controlRevision: 1,
+      controlSignature: "",
       updatedAt: Date.now()
     });
   }
@@ -665,12 +667,35 @@ function ensureRoomControlState(room) {
   return peers;
 }
 
+function getRoomControlSignature(room) {
+  return JSON.stringify({
+    hostClientId: room.hostClientId || null,
+    controllerClientId: room.controllerClientId || null,
+    freeForAll: room.freeForAll === true,
+    accessRequests: Array.isArray(room.accessRequests) ? room.accessRequests : []
+  });
+}
+
+function ensureRoomControlRevision(room) {
+  const signature = getRoomControlSignature(room);
+  const currentRevision = Math.max(1, Number(room.controlRevision) || 1);
+
+  if (room.controlSignature !== signature) {
+    room.controlRevision = room.controlSignature ? currentRevision + 1 : currentRevision;
+    room.controlSignature = signature;
+  } else {
+    room.controlRevision = currentRevision;
+  }
+}
+
 function buildControlPayload(room, peers = ensureRoomControlState(room)) {
   const peerMap = new Map(peers.map((peer) => [peer.clientId, peer]));
+  ensureRoomControlRevision(room);
   return {
     hostClientId: room.hostClientId,
     controllerClientId: room.controllerClientId,
     freeForAll: room.freeForAll === true,
+    revision: room.controlRevision,
     accessRequests: room.accessRequests.map((clientId) => ({
       clientId,
       name: peerMap.get(clientId)?.name || `Solver ${clientId.slice(0, 4)}`

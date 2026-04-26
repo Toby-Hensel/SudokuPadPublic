@@ -45,6 +45,53 @@ const ctcFeedCache = {
   videos: [],
   lastFetchedAt: null
 };
+const emergencyCtcVideos = [
+  {
+    title: "How to Slice a Sandwich Sudoku!",
+    youtubeUrl: "https://www.youtube.com/watch?v=blPgSzctUMg",
+    publishedAt: "",
+    publishedLabel: "8 hours ago",
+    thumbnailUrl: "https://i.ytimg.com/vi/blPgSzctUMg/hqdefault.jpg?sqp=-oaymwEjCNACELwBSFryq4qpAxUIARUAAAAAGAElAADIQj0AgKJDeAE=&rs=AOn4CLDDyd7VF-AEfUuabeaEFjUxtHySnQ",
+    sudokuPadUrl: "https://sudokupad.app/9fjvy1dcyo",
+    hasSudokuPadUrl: true
+  },
+  {
+    title: "Is This The BEST \"Region Sum Line\" Sudoku?",
+    youtubeUrl: "https://www.youtube.com/watch?v=GIVSl6pfT5Q",
+    publishedAt: "",
+    publishedLabel: "11 hours ago",
+    thumbnailUrl: "https://i.ytimg.com/vi/GIVSl6pfT5Q/hqdefault.jpg?sqp=-oaymwEjCNACELwBSFryq4qpAxUIARUAAAAAGAElAADIQj0AgKJDeAE=&rs=AOn4CLCySzO3vRKHGqjosoNOvO274A6f2w",
+    sudokuPadUrl: "https://sudokupad.app/xnt9jxy2an",
+    hasSudokuPadUrl: true
+  },
+  {
+    title: "These Pairs are so Square!",
+    youtubeUrl: "https://www.youtube.com/watch?v=1WoNu_Hze9k",
+    publishedAt: "",
+    publishedLabel: "1 day ago",
+    thumbnailUrl: "https://i.ytimg.com/vi/1WoNu_Hze9k/hqdefault.jpg?sqp=-oaymwEjCNACELwBSFryq4qpAxUIARUAAAAAGAElAADIQj0AgKJDeAE=&rs=AOn4CLB1nRjP2Qx2CXGUQeIJSkVruifWMA",
+    sudokuPadUrl: "https://sudokupad.app/7k71v1ey6x",
+    hasSudokuPadUrl: true
+  },
+  {
+    title: "The Genius Of Squashing a 9x9 Sudoku Into a 7x7 Grid",
+    youtubeUrl: "https://www.youtube.com/watch?v=Wq1n5wziTVo",
+    publishedAt: "",
+    publishedLabel: "1 day ago",
+    thumbnailUrl: "https://i.ytimg.com/vi/Wq1n5wziTVo/hqdefault.jpg?sqp=-oaymwEjCNACELwBSFryq4qpAxUIARUAAAAAGAElAADIQj0AgKJDeAE=&rs=AOn4CLBP9wosOfw1DhSrcV6oSaX-Uu4sqA",
+    sudokuPadUrl: "https://sudokupad.app/9fipkj2wr0",
+    hasSudokuPadUrl: true
+  },
+  {
+    title: "Sudoku ... in Base 3?",
+    youtubeUrl: "https://www.youtube.com/watch?v=7iuxM-Xtsxw",
+    publishedAt: "",
+    publishedLabel: "2 days ago",
+    thumbnailUrl: "https://i.ytimg.com/vi/7iuxM-Xtsxw/hqdefault.jpg?sqp=-oaymwEjCNACELwBSFryq4qpAxUIARUAAAAAGAElAADIQj0AgKJDeAE=&rs=AOn4CLBVTXhTlT2wAyJEXtz5dIRwj4it7g",
+    sudokuPadUrl: "https://sudokupad.app/7gyocv8k7m",
+    hasSudokuPadUrl: true
+  }
+];
 
 const publicContentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -440,7 +487,7 @@ async function fetchLatestCtcVideos(limit = 5) {
     if (ctcFeedCache.videos.length >= limit) {
       return ctcFeedCache.videos.slice(0, limit);
     }
-    throw error;
+    return emergencyCtcVideos.slice(0, limit);
   }
 }
 

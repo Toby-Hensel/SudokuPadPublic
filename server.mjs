@@ -97,6 +97,7 @@ const publicContentTypes = {
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".pdf": "application/pdf",
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".ico": "image/x-icon",
@@ -577,8 +578,7 @@ function shouldRedirectToPublic(url, origin) {
 function isReservedPath(pathname) {
   return pathname === "/" ||
     pathname.startsWith("/api/") ||
-    pathname === "/assets/collab-client.css" ||
-    pathname === "/assets/collab-client.js" ||
+    pathname.startsWith("/assets/") ||
     pathname === "/favicon.ico";
 }
 
@@ -1456,6 +1456,24 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         line-height: 1.5;
       }
 
+      .reward-banner {
+        display: grid;
+        gap: 10px;
+        margin-top: 14px;
+        padding: 16px 18px;
+        border-radius: 18px;
+        border: 1px solid rgba(125, 182, 255, 0.22);
+        background: rgba(125, 182, 255, 0.08);
+      }
+
+      .reward-banner__title {
+        font-weight: 700;
+      }
+
+      .reward-banner__link {
+        width: fit-content;
+      }
+
       .footer {
         margin-top: 28px;
         color: var(--muted);
@@ -1539,6 +1557,11 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
                 <input id="ctc-room" name="ctc-room" placeholder="leave blank for a fresh private room" autocomplete="off" data-i18n-placeholder="hero.ctcRoom.placeholder">
               </label>
               <div class="mini" data-i18n="hero.ctcRoom.note">When filled in, every Create room from puzzle button above will use this room name instead of creating a random one.</div>
+              <div class="reward-banner">
+                <div class="reward-banner__title" data-i18n="reward.title">Monthly reward</div>
+                <div class="mini" data-i18n="reward.note">Open this month&apos;s bonus PDF sudoku pack.</div>
+                <a class="video-card__button video-card__button--watch reward-banner__link" href="/assets/rewards/spiderman-sudoku-9.pdf" target="_blank" rel="noreferrer" data-i18n="reward.open">Open monthly reward PDF</a>
+              </div>
             </div>
             <div class="hero-feed">
               ${renderCtcVideoCards(ctcVideos, { compact: true })}
@@ -1626,6 +1649,9 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
             "hero.ctcRoom.label": "Room name for Cracking the Cryptic links (optional)",
             "hero.ctcRoom.placeholder": "leave blank for a fresh private room",
             "hero.ctcRoom.note": "When filled in, every Create room from puzzle button above will use this room name instead of creating a random one.",
+            "reward.title": "Monthly reward",
+            "reward.note": "Open this month's bonus PDF sudoku pack.",
+            "reward.open": "Open monthly reward PDF",
             "ctc.empty.title": "Latest uploads are loading awkwardly right now.",
             "ctc.empty.body": "The launch tools still work. Try refreshing in a moment and the feed should repopulate.",
             "ctc.badge.linked": "SudokuPad linked",
@@ -1673,6 +1699,9 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
             "hero.ctcRoom.label": "Nom de la sala per als enllaços de Cracking the Cryptic (opcional)",
             "hero.ctcRoom.placeholder": "deixa-ho en blanc per crear una sala privada nova",
             "hero.ctcRoom.note": "Si l'omples, tots els botons de crear sala del puzzle de dalt faran servir aquest nom de sala en lloc de crear-ne un d'aleatori.",
+            "reward.title": "Recompensa mensual",
+            "reward.note": "Obre el paquet extra de sudokus en PDF d'aquest mes.",
+            "reward.open": "Obre el PDF de la recompensa",
             "ctc.empty.title": "Ara mateix els últims uploads s'estan carregant de manera estranya.",
             "ctc.empty.body": "Les eines per obrir sales continuen funcionant. Torna a refrescar d'aquí a un moment i el feed s'hauria de tornar a omplir.",
             "ctc.badge.linked": "Amb enllaç de SudokuPad",
@@ -2410,7 +2439,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "GET" && (pathname === "/assets/collab-client.css" || pathname === "/assets/collab-client.js")) {
+    if (req.method === "GET" && pathname.startsWith("/assets/")) {
       await servePublicAsset(res, pathname);
       return;
     }

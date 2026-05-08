@@ -49,9 +49,9 @@ async function waitForLive(page, timeout = 30_000) {
   );
 }
 
-async function waitForController(page, timeout = 15_000) {
+async function waitForPeers(page, timeout = 15_000) {
   await page.waitForFunction(
-    () => /you are controlling/i.test(document.querySelector(".collab-dock__control-summary")?.textContent || ""),
+    () => (document.querySelectorAll(".collab-dock__peer").length || 0) >= 1,
     { timeout }
   );
 }
@@ -88,16 +88,6 @@ async function waitForRemoteHighlight(page, row, col, timeoutMs = 10_000) {
   }
 
   throw new Error(`Remote highlight ${row},${col} did not appear in time.`);
-}
-
-async function waitForDockReady(page, timeoutMs = 10_000) {
-  await page.waitForFunction(
-    () => {
-      const summary = document.querySelector(".collab-dock__control-summary");
-      return Boolean(summary && summary.textContent && summary.textContent.trim().length > 0);
-    },
-    { timeout: timeoutMs }
-  );
 }
 
 async function waitForReplaySync(pageA, pageB, previousActions, timeoutMs = 10_000) {
@@ -140,7 +130,7 @@ async function runScenario(browser, scenario) {
 
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();
-  const url = `${baseUrl}/${puzzleId}?room=${roomId}`;
+  const url = `${baseUrl}/${puzzleId}?room=${roomId}&coop=1`;
 
   try {
     await pageA.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
@@ -150,8 +140,8 @@ async function runScenario(browser, scenario) {
     await pageB.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
     await dismissStartPuzzle(pageB);
     await waitForLive(pageB, 45_000);
-    await waitForController(pageA);
-    await waitForDockReady(pageB, 15_000);
+    await waitForPeers(pageA);
+    await waitForPeers(pageB, 15_000);
 
     const box = await pageA.locator("#svgrenderer").boundingBox();
     if (!box) {

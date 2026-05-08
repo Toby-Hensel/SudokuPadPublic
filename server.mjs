@@ -35,6 +35,7 @@ const twilioAuthToken = String(process.env.TWILIO_AUTH_TOKEN || "").trim();
 const twilioTurnTtl = Math.min(86_400, Math.max(600, Number(process.env.TWILIO_TURN_TTL || 3600) || 3600));
 const twilioTurnRegion = String(process.env.TWILIO_TURN_REGION || "").trim().toLowerCase();
 const rooms = new Map();
+const coopRooms = new Map();
 const iceServerCache = {
   expiresAt: 0,
   iceServers: configuredIceServers,
@@ -569,7 +570,9 @@ function shouldRedirectToPublic(url, origin) {
   try {
     const current = new URL(origin);
     const preferred = new URL(publicAppOrigin);
-    return isPuzzleRoute(url.pathname) && isLocalOrPrivateHostname(current.hostname) && current.origin !== preferred.origin;
+    return (isPuzzleRoute(url.pathname) || isCoopRoute(url.pathname)) &&
+      isLocalOrPrivateHostname(current.hostname) &&
+      current.origin !== preferred.origin;
   } catch {
     return false;
   }
@@ -592,6 +595,22 @@ function isPuzzleRoute(pathname) {
   }
 
   return /^\/(?:sudoku\/)?[^/]+$/i.test(pathname);
+}
+
+function isCoopRoute(pathname) {
+  if (isReservedPath(pathname)) {
+    return false;
+  }
+
+  if (/\.[a-z0-9]+$/i.test(pathname)) {
+    return false;
+  }
+
+  return /^\/coop\/(?:sudoku\/)?[^/]+$/i.test(pathname);
+}
+
+function extractPuzzlePathFromCoopRoute(pathname) {
+  return pathname.replace(/^\/coop(?=\/)/i, "") || "/";
 }
 
 function getRoom(roomId) {
@@ -618,6 +637,74 @@ function getRoom(roomId) {
 
 function peekRoom(roomId) {
   return rooms.get(roomId) || null;
+}
+
+function getCoopRoom(roomId) {
+  const normalizedRoomId = sanitizeRoomId(roomId, "shared");
+
+  if (!coopRooms.has(normalizedRoomId)) {
+    coopRooms.set(normalizedRoomId, {
+      roomId: normalizedRoomId,
+      puzzleId: null,
+      latest: null,
+      highlights: new Map(),
+      clients: new Map(),
+      updatedAt: Date.now()
+    });
+  }
+
+  return coopRooms.get(normalizedRoomId);
+}
+
+function coopActivePeers(room) {
+  const cutoff = Date.now() - 45_000;
+  const peers = [];
+
+  for (const client of room.clients.values()) {
+    if (client.lastSeen >= cutoff || (client.res && !client.res.writableEnded)) {
+      peers.push({
+        clientId: client.clientId,
+        name: client.name || `Solver ${client.clientId.slice(0, 4)}`
+      });
+    }
+  }
+
+  return peers.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function coopPresencePayload(room) {
+  const peers = coopActivePeers(room);
+  return {
+    roomId: room.roomId,
+    puzzleId: room.puzzleId,
+    count: peers.length,
+    peers
+  };
+}
+
+function getCoopHighlightPayloads(room) {
+  const cutoff = Date.now() - 4_000;
+  const activeClientIds = new Set(coopActivePeers(room).map((peer) => peer.clientId));
+  const payloads = [];
+
+  for (const [clientId, highlight] of room.highlights.entries()) {
+    if (!highlight || highlight.updatedAt < cutoff || !activeClientIds.has(clientId)) {
+      room.highlights.delete(clientId);
+      continue;
+    }
+
+    payloads.push({
+      clientId,
+      name: highlight.name,
+      row: highlight.row,
+      col: highlight.col,
+      rows: highlight.rows,
+      cols: highlight.cols,
+      updatedAt: highlight.updatedAt
+    });
+  }
+
+  return payloads.sort((left, right) => left.updatedAt - right.updatedAt);
 }
 
 function activePeers(room) {
@@ -892,14 +979,28 @@ async function servePublicAsset(res, pathname) {
     return;
   }
 
-  const content = await readFile(filePath);
-  const contentType = publicContentTypes[extname(filePath)] || "application/octet-stream";
+  try {
+    const content = await readFile(filePath);
+    const contentType = publicContentTypes[extname(filePath)] || "application/octet-stream";
 
-  res.writeHead(200, {
-    "content-type": contentType,
-    "cache-control": "no-store"
-  });
-  res.end(content);
+    res.writeHead(200, {
+      "content-type": contentType,
+      "cache-control": "no-store"
+    });
+    res.end(content);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+
+    const upstreamUrl = new URL(pathname, upstreamOrigin);
+    const upstreamResponse = await fetchUpstream(upstreamUrl);
+    res.writeHead(upstreamResponse.statusCode, {
+      "cache-control": String(upstreamResponse.headers["cache-control"] || "") || "public, max-age=300",
+      "content-type": String(upstreamResponse.headers["content-type"] || "") || "application/octet-stream"
+    });
+    res.end(upstreamResponse.body);
+  }
 }
 
 function injectCollabAssets(html) {
@@ -908,6 +1009,14 @@ function injectCollabAssets(html) {
   const scriptTag = `<script src="/assets/collab-client.js?v=${assetVersion}" defer></script>`;
   return html
     .replace("</head>", `${headTag}\n${configTag}\n</head>`)
+    .replace("</body>", `${scriptTag}\n</body>`);
+}
+
+function injectCoopAssets(html) {
+  const headTag = `<link rel="stylesheet" href="/assets/coop-client.css?v=${assetVersion}">`;
+  const scriptTag = `<script src="/assets/coop-client.js?v=${assetVersion}" defer></script>`;
+  return html
+    .replace("</head>", `${headTag}\n</head>`)
     .replace("</body>", `${scriptTag}\n</body>`);
 }
 
@@ -1575,6 +1684,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
               </label>
               <div class="actions">
                 <button class="primary" type="submit" data-i18n="launch.actions.create">Open puzzle</button>
+                <button class="secondary" type="button" id="open-coop" data-i18n="launch.actions.shared">Start co-op room</button>
               </div>
             </form>
           </div>
@@ -1587,6 +1697,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
       (() => {
         const origin = ${JSON.stringify(upstreamOrigin)};
         const sourceInput = document.getElementById("source");
+        const openCoopButton = document.getElementById("open-coop");
         const themeToggleButton = document.getElementById("theme-toggle");
         const themeToggleIcon = document.getElementById("theme-toggle-icon");
         const themeToggleLabel = document.getElementById("theme-toggle-label");
@@ -1618,7 +1729,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
             "launch.room.label": "Room name (optional)",
             "launch.room.placeholder": "leave blank to create a fresh private room",
             "launch.actions.create": "Open puzzle",
-            "launch.actions.shared": "Open puzzle",
+            "launch.actions.shared": "Start co-op room",
             "launch.output.title": "Your collaboration link",
             "launch.output.copy": "Copy link",
             "launch.output.open": "Open room",
@@ -1668,7 +1779,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
             "launch.room.label": "Nom de la sala (opcional)",
             "launch.room.placeholder": "deixa-ho en blanc per crear una sala privada nova",
             "launch.actions.create": "Crea enllaç de col·laboració",
-            "launch.actions.shared": "Fes servir la sala compartida del puzzle",
+            "launch.actions.shared": "Obre sala cooperativa",
             "launch.output.title": "El teu enllaç de col·laboració",
             "launch.output.copy": "Copia l'enllaç",
             "launch.output.open": "Obre la sala",
@@ -1758,6 +1869,10 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           applyLanguage(currentLanguage === "en" ? "ca" : "en");
         }
 
+        function randomRoom() {
+          return Math.random().toString(36).slice(2, 10);
+        }
+
         function buildLinkFromSource(source) {
           const puzzleId = extractPuzzleId(source);
           if (!puzzleId) {
@@ -1780,6 +1895,22 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
         document.getElementById("launch-form").addEventListener("submit", (event) => {
           event.preventDefault();
           openPuzzle(sourceInput.value);
+        });
+
+        openCoopButton.addEventListener("click", () => {
+          try {
+            const puzzleId = extractPuzzleId(sourceInput.value);
+            if (!puzzleId) {
+              throw new Error(getTranslation("alerts.sourceRequired"));
+            }
+            const link = new URL(window.location.origin + "/" + encodeURIComponent(puzzleId));
+            link.searchParams.set("room", randomRoom());
+            link.searchParams.set("coop", "1");
+            window.location.href = link.toString();
+          } catch (error) {
+            sourceInput.focus();
+            alert(error.message);
+          }
         });
 
         themeToggleButton.addEventListener("click", toggleTheme);
@@ -1821,6 +1952,20 @@ async function proxyUpstream(req, res, url, { inject = false } = {}) {
   }
 
   res.end(upstreamResponse.body);
+}
+
+async function proxyCoopPuzzle(req, res, url) {
+  const upstreamPath = extractPuzzlePathFromCoopRoute(url.pathname);
+  const upstreamUrl = new URL(upstreamPath + url.search, upstreamOrigin);
+  const upstreamResponse = await fetchUpstream(upstreamUrl);
+  const headers = {
+    "cache-control": "no-store",
+    "content-type": String(upstreamResponse.headers["content-type"] || "") || "application/octet-stream"
+  };
+
+  res.writeHead(upstreamResponse.statusCode, headers);
+  const html = upstreamResponse.body.toString("utf8");
+  res.end(injectCoopAssets(html));
 }
 
 function handleSse(req, res, url) {
@@ -2229,6 +2374,226 @@ async function handleNote(req, res, url) {
   });
 }
 
+function handleCoopSse(req, res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "shared");
+  const clientId = sanitizeRoomId(url.searchParams.get("clientId"), sha(Date.now()).slice(0, 8));
+  const room = getCoopRoom(roomId);
+  const existingClient = room.clients.get(clientId);
+
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-store",
+    connection: "keep-alive",
+    "x-accel-buffering": "no"
+  });
+  res.flushHeaders?.();
+
+  res.write("retry: 3000\n");
+  res.write(": connected\n\n");
+
+  const pingId = setInterval(() => {
+    if (!res.writableEnded) {
+      res.write(": ping\n\n");
+    }
+  }, 15_000);
+
+  room.clients.set(clientId, {
+    clientId,
+    name: existingClient?.name || "",
+    lastSeen: Date.now(),
+    res,
+    pingId
+  });
+  room.updatedAt = Date.now();
+
+  writeSse(res, "presence", coopPresencePayload(room));
+  writeSse(res, "highlight", getCoopHighlightPayloads(room));
+  if (room.latest) {
+    writeSse(res, "snapshot", room.latest);
+  }
+
+  req.on("close", () => {
+    const client = room.clients.get(clientId);
+    if (client?.pingId) {
+      clearInterval(client.pingId);
+    }
+    if (client) {
+      client.res = null;
+      client.lastSeen = Date.now();
+    }
+  });
+}
+
+async function handleCoopRegistration(req, res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "shared");
+  const room = getCoopRoom(roomId);
+  const body = await readJsonBody(req);
+  const clientId = sanitizeRoomId(body.clientId, "anon");
+  const name = String(body.name || "").trim().slice(0, 48) || `Solver ${clientId.slice(0, 4)}`;
+  const puzzleId = normalizePuzzleId(body.puzzleId);
+  const existingClient = room.clients.get(clientId);
+
+  room.puzzleId = puzzleId || room.puzzleId;
+  room.clients.set(clientId, {
+    clientId,
+    name,
+    lastSeen: Date.now(),
+    res: existingClient?.res || null,
+    pingId: existingClient?.pingId || null
+  });
+  room.updatedAt = Date.now();
+
+  const presence = coopPresencePayload(room);
+  broadcast(room, "presence", presence);
+  sendJson(res, 200, {
+    ok: true,
+    roomId: room.roomId,
+    puzzleId: room.puzzleId,
+    presence
+  });
+}
+
+async function handleCoopPresence(req, res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "shared");
+  const room = getCoopRoom(roomId);
+  const body = await readJsonBody(req);
+  const clientId = sanitizeRoomId(body.clientId, "anon");
+  const name = String(body.name || "").trim().slice(0, 48) || `Solver ${clientId.slice(0, 4)}`;
+  const existingClient = room.clients.get(clientId);
+
+  room.clients.set(clientId, {
+    clientId,
+    name,
+    lastSeen: Date.now(),
+    res: existingClient?.res || null,
+    pingId: existingClient?.pingId || null
+  });
+  room.updatedAt = Date.now();
+
+  const presence = coopPresencePayload(room);
+  broadcast(room, "presence", presence);
+  sendJson(res, 200, {
+    ok: true,
+    presence
+  });
+}
+
+async function handleCoopSync(res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "shared");
+  const room = getCoopRoom(roomId);
+
+  sendJson(res, 200, {
+    roomId: room.roomId,
+    puzzleId: room.puzzleId,
+    snapshot: room.latest,
+    presence: coopPresencePayload(room),
+    highlights: getCoopHighlightPayloads(room)
+  });
+}
+
+async function handleCoopUpdate(req, res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "shared");
+  const room = getCoopRoom(roomId);
+  const body = await readJsonBody(req);
+  const clientId = sanitizeRoomId(body.clientId, "anon");
+  const name = String(body.name || "").trim().slice(0, 48) || `Solver ${clientId.slice(0, 4)}`;
+  const replay = body?.replay;
+
+  if (!replay || typeof replay !== "object") {
+    sendJson(res, 400, { error: "Missing replay payload." });
+    return;
+  }
+
+  const existingClient = room.clients.get(clientId);
+  room.clients.set(clientId, {
+    clientId,
+    name,
+    lastSeen: Date.now(),
+    res: existingClient?.res || null,
+    pingId: existingClient?.pingId || null
+  });
+
+  room.puzzleId = normalizePuzzleId(replay.puzzleId || room.puzzleId);
+  const baseRevision = Number(body.baseRevision) || 0;
+  const currentRevision = room.latest?.revision || 0;
+  const nextReplay = baseRevision >= currentRevision ? replay : mergeReplays(room.latest?.replay, replay);
+  const nextHash = sha(JSON.stringify(nextReplay));
+
+  if (room.latest?.hash === nextHash) {
+    sendJson(res, 200, {
+      ok: true,
+      roomId: room.roomId,
+      revision: room.latest.revision,
+      unchanged: true
+    });
+    return;
+  }
+
+  room.latest = {
+    roomId: room.roomId,
+    puzzleId: room.puzzleId,
+    replay: nextReplay,
+    revision: currentRevision + 1,
+    hash: nextHash,
+    updatedAt: Date.now(),
+    clientId,
+    name
+  };
+  room.updatedAt = Date.now();
+
+  broadcast(room, "snapshot", room.latest);
+  broadcast(room, "presence", coopPresencePayload(room));
+  sendJson(res, 200, {
+    ok: true,
+    roomId: room.roomId,
+    revision: room.latest.revision
+  });
+}
+
+async function handleCoopHighlight(req, res, url) {
+  const roomId = sanitizeRoomId(url.pathname.split("/").pop(), "shared");
+  const room = getCoopRoom(roomId);
+  const body = await readJsonBody(req);
+  const clientId = sanitizeRoomId(body.clientId, "anon");
+  const name = String(body.name || "").trim().slice(0, 48) || `Solver ${clientId.slice(0, 4)}`;
+  const row = Number(body.row);
+  const col = Number(body.col);
+  const rows = Math.max(1, Number(body.rows) || 9);
+  const cols = Math.max(1, Number(body.cols) || 9);
+
+  if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || row >= rows || col < 0 || col >= cols) {
+    sendJson(res, 400, { error: "Invalid highlight coordinates." });
+    return;
+  }
+
+  const existingClient = room.clients.get(clientId);
+  room.clients.set(clientId, {
+    clientId,
+    name,
+    lastSeen: Date.now(),
+    res: existingClient?.res || null,
+    pingId: existingClient?.pingId || null
+  });
+
+  const highlight = {
+    clientId,
+    name,
+    row,
+    col,
+    rows,
+    cols,
+    updatedAt: Date.now()
+  };
+
+  room.highlights.set(clientId, highlight);
+  room.updatedAt = Date.now();
+  broadcast(room, "highlight", highlight);
+  sendJson(res, 200, {
+    ok: true,
+    highlights: getCoopHighlightPayloads(room)
+  });
+}
+
 function pruneRooms() {
   const now = Date.now();
 
@@ -2257,6 +2622,35 @@ function pruneRooms() {
 
     if (room.clients.size === 0 && room.updatedAt < now - 24 * 60 * 60 * 1000) {
       rooms.delete(room.roomId);
+    }
+  }
+
+  for (const room of coopRooms.values()) {
+    let removedClient = false;
+
+    for (const [clientId, client] of room.clients.entries()) {
+      if (client.res && !client.res.writableEnded) {
+        continue;
+      }
+
+      if (client.lastSeen < now - 60_000) {
+        if (client.pingId) {
+          clearInterval(client.pingId);
+        }
+        room.highlights.delete(clientId);
+        room.clients.delete(clientId);
+        removedClient = true;
+      }
+    }
+
+    if (removedClient && room.clients.size > 0) {
+      room.updatedAt = Date.now();
+      broadcast(room, "presence", coopPresencePayload(room));
+      broadcast(room, "highlight", getCoopHighlightPayloads(room));
+    }
+
+    if (room.clients.size === 0 && room.updatedAt < now - 24 * 60 * 60 * 1000) {
+      coopRooms.delete(room.roomId);
     }
   }
 }
@@ -2299,8 +2693,38 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         ok: true,
         upstreamOrigin,
-        rooms: rooms.size
+        rooms: rooms.size + coopRooms.size
       });
+      return;
+    }
+
+    if (req.method === "GET" && pathname.startsWith("/api/coop/stream/")) {
+      handleCoopSse(req, res, url);
+      return;
+    }
+
+    if (req.method === "GET" && pathname.startsWith("/api/coop/sync/")) {
+      await handleCoopSync(res, url);
+      return;
+    }
+
+    if (req.method === "POST" && pathname.startsWith("/api/coop/register/")) {
+      await handleCoopRegistration(req, res, url);
+      return;
+    }
+
+    if (req.method === "POST" && pathname.startsWith("/api/coop/presence/")) {
+      await handleCoopPresence(req, res, url);
+      return;
+    }
+
+    if (req.method === "POST" && pathname.startsWith("/api/coop/update/")) {
+      await handleCoopUpdate(req, res, url);
+      return;
+    }
+
+    if (req.method === "POST" && pathname.startsWith("/api/coop/highlight/")) {
+      await handleCoopHighlight(req, res, url);
       return;
     }
 
@@ -2365,7 +2789,23 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && isCoopRoute(pathname)) {
+      await proxyCoopPuzzle(req, res, url);
+      return;
+    }
+
     if (req.method === "GET" && isPuzzleRoute(pathname)) {
+      if (url.searchParams.get("coop") === "1") {
+        const upstreamUrl = new URL(pathname, upstreamOrigin);
+        const upstreamResponse = await fetchUpstream(upstreamUrl);
+        res.writeHead(upstreamResponse.statusCode, {
+          "cache-control": "no-store",
+          "content-type": String(upstreamResponse.headers["content-type"] || "") || "application/octet-stream"
+        });
+        res.end(injectCoopAssets(upstreamResponse.body.toString("utf8")));
+        return;
+      }
+
       const redirectUrl = new URL(pathname + url.search, upstreamOrigin);
       res.writeHead(302, { location: redirectUrl.toString() });
       res.end();

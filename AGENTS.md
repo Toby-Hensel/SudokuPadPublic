@@ -18,9 +18,9 @@ $env:NODE_PATH='C:\Users\rubie\.cache\codex-runtimes\codex-primary-runtime\depen
 What it checks:
 
 - starts the local server
-- opens the same puzzle in two separate browser contexts
+- opens the same `?coop=1` puzzle room in two separate browser contexts
 - dismisses the start dialog
-- verifies controller cell highlights sync to the other tab
+- verifies cell highlights sync to the other tab
 - verifies real UI sync for digit, undo, corner marks, centre marks, and color
 - verifies polling-only fallback still syncs when the live stream endpoint is unavailable
 - fails if the sync takes longer than 2 seconds

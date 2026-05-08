@@ -498,7 +498,7 @@ function renderCtcVideoCards(videos, options = {}) {
     return `
       <div class="ctc-empty">
         <strong data-i18n="ctc.empty.title">Latest uploads are loading awkwardly right now.</strong>
-        <div class="mini" data-i18n="ctc.empty.body">The launch tools still work. Try refreshing in a moment and the feed should repopulate.</div>
+        <div class="mini" data-i18n="ctc.empty.body">Refresh in a moment and the puzzle list should repopulate.</div>
       </div>
     `;
   }
@@ -516,7 +516,7 @@ function renderCtcVideoCards(videos, options = {}) {
         <h3>${escapeHtml(video.title)}</h3>
         <div class="video-card__actions">
           <a class="video-card__button video-card__button--watch" href="${escapeHtml(video.youtubeUrl)}" target="_blank" rel="noreferrer" data-i18n="ctc.watch">Watch on YouTube</a>
-          <button class="video-card__button video-card__button--play" type="button" data-ctc-puzzle-source="${escapeHtml(video.sudokuPadUrl)}" data-i18n="ctc.createRoom">Create room from puzzle</button>
+          <button class="video-card__button video-card__button--play" type="button" data-ctc-puzzle-source="${escapeHtml(video.sudokuPadUrl)}" data-i18n="ctc.createRoom">Open puzzle</button>
         </div>
       </div>
     </article>
@@ -1546,17 +1546,12 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
               <div>
                 <h1 data-i18n="hero.title">Latest Cracking the Cryptic puzzle links.</h1>
                 <p class="lede" data-i18n="hero.lede">
-                  The newest five official uploads that include a SudokuPad link are now right at the top. Each one opens a fresh collaboration room immediately, or into a named room if you set one first.
+                  Open the latest featured SudokuPad puzzles directly from this page, or paste any SudokuPad link below to launch it.
                 </p>
               </div>
               <a class="section-link" href="https://www.youtube.com/feeds/videos.xml?channel_id=UCC-UOdK8-mIjxBQm_ot1T-Q" target="_blank" rel="noreferrer" data-i18n="hero.feed">Official upload feed</a>
             </div>
             <div class="hero-copy__tools">
-              <label>
-                <span data-i18n="hero.ctcRoom.label">Room name for Cracking the Cryptic links (optional)</span>
-                <input id="ctc-room" name="ctc-room" placeholder="leave blank for a fresh private room" autocomplete="off" data-i18n-placeholder="hero.ctcRoom.placeholder">
-              </label>
-              <div class="mini" data-i18n="hero.ctcRoom.note">When filled in, every Create room from puzzle button above will use this room name instead of creating a random one.</div>
               <div class="reward-banner">
                 <div class="reward-banner__title" data-i18n="reward.title">Monthly reward</div>
                 <div class="mini" data-i18n="reward.note">Open this month&apos;s bonus PDF sudoku pack.</div>
@@ -1570,7 +1565,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
 
           <div class="launch-card">
             <div>
-              <div class="launch-card__title" data-i18n="launch.title">Launch A Room</div>
+              <div class="launch-card__title" data-i18n="launch.title">Open A Sudoku</div>
               <p class="launch-card__note">Paste a SudokuPad URL or short puzzle ID. I’ll generate a collaboration link on the correct host for sharing.</p>
             </div>
             <form id="launch-form">
@@ -1578,62 +1573,20 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
                 <span data-i18n="launch.source.label">SudokuPad link or ID</span>
                 <input id="source" name="source" placeholder="https://sudokupad.app/94Qq6qGjh2" autocomplete="off" data-i18n-placeholder="launch.source.placeholder">
               </label>
-              <label>
-                <span data-i18n="launch.room.label">Room name (optional)</span>
-                <input id="room" name="room" placeholder="leave blank to create a fresh private room" autocomplete="off" data-i18n-placeholder="launch.room.placeholder">
-              </label>
               <div class="actions">
-                <button class="primary" type="submit" data-i18n="launch.actions.create">Create collaboration link</button>
-                <button class="secondary" type="button" id="open-public" data-i18n="launch.actions.shared">Use shared puzzle room</button>
+                <button class="primary" type="submit" data-i18n="launch.actions.create">Open puzzle</button>
               </div>
             </form>
-            <div class="output" id="output">
-              <strong data-i18n="launch.output.title">Your collaboration link</strong>
-              <a id="result-link" href="#"></a>
-              <div class="actions">
-                <button class="secondary" type="button" id="copy-link" data-i18n="launch.output.copy">Copy link</button>
-                <button class="primary" type="button" id="open-link" data-i18n="launch.output.open">Open room</button>
-              </div>
-            </div>
-            <div class="launch-panel">
-              <div>
-                <div class="launch-card__title" data-i18n="join.title">Join Existing Room</div>
-                <p class="launch-card__note" data-i18n="join.note">Type the room name someone else created and jump straight into that shared puzzle.</p>
-              </div>
-              <form id="join-form">
-                <label>
-                  <span data-i18n="join.room.label">Room name</span>
-                  <input id="join-room" name="join-room" placeholder="for example: streamparty" autocomplete="off" data-i18n-placeholder="join.room.placeholder">
-                </label>
-                <div class="actions">
-                  <button class="secondary" type="submit" id="join-room-button" data-i18n="join.actions.submit">Join room</button>
-                </div>
-              </form>
-              <div class="mini" data-i18n="join.help">Use the room name from the end of a shared collaboration link, after <code>?room=</code>.</div>
-            </div>
           </div>
         </div>
       </section>
 
-      <div class="footer">
-        <span data-i18n="footer.origin">Collaboration origin:</span> <code>${escapeHtml(preferredOrigin)}</code>
-      </div>
     </main>
 
     <script>
       (() => {
-        const origin = ${JSON.stringify(preferredOrigin)};
-        const pageOrigin = window.location.origin;
+        const origin = ${JSON.stringify(upstreamOrigin)};
         const sourceInput = document.getElementById("source");
-        const roomInput = document.getElementById("room");
-        const ctcRoomInput = document.getElementById("ctc-room");
-        const output = document.getElementById("output");
-        const resultLink = document.getElementById("result-link");
-        const copyLinkButton = document.getElementById("copy-link");
-        const openLinkButton = document.getElementById("open-link");
-        const openPublicButton = document.getElementById("open-public");
-        const joinRoomInput = document.getElementById("join-room");
-        const joinRoomButton = document.getElementById("join-room-button");
         const themeToggleButton = document.getElementById("theme-toggle");
         const themeToggleIcon = document.getElementById("theme-toggle-icon");
         const themeToggleLabel = document.getElementById("theme-toggle-label");
@@ -1644,7 +1597,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           en: {
             "topbar.youtube": "Cracking the Cryptic on YouTube",
             "hero.title": "Latest Cracking the Cryptic puzzle links.",
-            "hero.lede": "The newest five official uploads that include a SudokuPad link are now right at the top. Each one opens a fresh collaboration room immediately, or into a named room if you set one first.",
+            "hero.lede": "Open the latest featured SudokuPad puzzles directly from this page, or paste any SudokuPad link below to launch it.",
             "hero.feed": "Official upload feed",
             "hero.ctcRoom.label": "Room name for Cracking the Cryptic links (optional)",
             "hero.ctcRoom.placeholder": "leave blank for a fresh private room",
@@ -1653,19 +1606,19 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
             "reward.note": "Open this month's bonus PDF sudoku pack.",
             "reward.open": "Open monthly reward PDF",
             "ctc.empty.title": "Latest uploads are loading awkwardly right now.",
-            "ctc.empty.body": "The launch tools still work. Try refreshing in a moment and the feed should repopulate.",
+            "ctc.empty.body": "Refresh in a moment and the puzzle list should repopulate.",
             "ctc.badge.linked": "SudokuPad linked",
             "ctc.badge.unlinked": "No SudokuPad link",
             "ctc.watch": "Watch on YouTube",
-            "ctc.createRoom": "Create room from puzzle",
-            "launch.title": "Launch A Room",
-            "launch.note": "Paste a SudokuPad URL or short puzzle ID. I'll generate a collaboration link on the correct host for sharing.",
+            "ctc.createRoom": "Open puzzle",
+            "launch.title": "Open A Sudoku",
+            "launch.note": "Paste a SudokuPad URL or short puzzle ID and open it directly.",
             "launch.source.label": "SudokuPad link or ID",
             "launch.source.placeholder": "https://sudokupad.app/94Qq6qGjh2",
             "launch.room.label": "Room name (optional)",
             "launch.room.placeholder": "leave blank to create a fresh private room",
-            "launch.actions.create": "Create collaboration link",
-            "launch.actions.shared": "Use shared puzzle room",
+            "launch.actions.create": "Open puzzle",
+            "launch.actions.shared": "Open puzzle",
             "launch.output.title": "Your collaboration link",
             "launch.output.copy": "Copy link",
             "launch.output.open": "Open room",
@@ -1765,18 +1718,6 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           }
         }
 
-        function slugifyRoom(value) {
-          return String(value || "")
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9_-]/g, "")
-            .slice(0, 64);
-        }
-
-        function randomRoom() {
-          return Math.random().toString(36).slice(2, 10);
-        }
-
         function applyTheme(theme) {
           const nextTheme = theme === "light" ? "light" : "dark";
           document.documentElement.dataset.theme = nextTheme;
@@ -1817,115 +1758,28 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           applyLanguage(currentLanguage === "en" ? "ca" : "en");
         }
 
-        function buildLinkFromSource(source, { usePuzzleRoom, roomValue } = {}) {
+        function buildLinkFromSource(source) {
           const puzzleId = extractPuzzleId(source);
           if (!puzzleId) {
             throw new Error(getTranslation("alerts.sourceRequired"));
           }
 
-          const room = usePuzzleRoom
-            ? slugifyRoom(puzzleId)
-            : slugifyRoom(roomValue) || randomRoom();
-
           const link = new URL(origin + "/" + encodeURIComponent(puzzleId));
-          link.searchParams.set("room", room);
           return link.toString();
         }
 
-        function buildLink({ usePuzzleRoom }) {
-          const source = sourceInput.value;
+        function openPuzzle(source) {
           try {
-            return buildLinkFromSource(source, {
-              usePuzzleRoom,
-              roomValue: roomInput.value
-            });
+            window.location.href = buildLinkFromSource(source);
           } catch (error) {
             sourceInput.focus();
-            throw error;
+            alert(error.message);
           }
-        }
-
-        function showLink(link) {
-          resultLink.href = link;
-          resultLink.textContent = link;
-          output.classList.add("visible");
-        }
-
-        async function joinExistingRoom() {
-          const room = slugifyRoom(joinRoomInput.value);
-          if (!room) {
-            joinRoomInput.focus();
-            throw new Error(getTranslation("alerts.roomRequired"));
-          }
-
-          const lookupOrigins = [...new Set([origin, pageOrigin].filter(Boolean))];
-          let lastPayload = {};
-
-          for (const lookupOrigin of lookupOrigins) {
-            const response = await fetch(lookupOrigin + "/api/collab/lookup/" + encodeURIComponent(room));
-            const payload = await response.json().catch(() => ({}));
-            lastPayload = payload;
-
-            if (!response.ok) {
-              continue;
-            }
-
-            if (!payload.inviteLink) {
-              throw new Error(getTranslation("alerts.roomNotReady"));
-            }
-
-            window.location.href = payload.inviteLink;
-            return;
-          }
-
-          throw new Error(lastPayload.error || getTranslation("alerts.roomMissing"));
         }
 
         document.getElementById("launch-form").addEventListener("submit", (event) => {
           event.preventDefault();
-          try {
-            showLink(buildLink({ usePuzzleRoom: false }));
-          } catch (error) {
-            alert(error.message);
-          }
-        });
-
-        openPublicButton.addEventListener("click", () => {
-          try {
-            showLink(buildLink({ usePuzzleRoom: true }));
-          } catch (error) {
-            alert(error.message);
-          }
-        });
-
-        copyLinkButton.addEventListener("click", async () => {
-          if (!resultLink.href) return;
-          await navigator.clipboard.writeText(resultLink.href);
-          copyLinkButton.textContent = getTranslation("copy.copied");
-          setTimeout(() => {
-            copyLinkButton.textContent = getTranslation("launch.output.copy");
-          }, 1200);
-        });
-
-        openLinkButton.addEventListener("click", () => {
-          if (resultLink.href) {
-            window.location.href = resultLink.href;
-          }
-        });
-
-        document.getElementById("join-form").addEventListener("submit", async (event) => {
-          event.preventDefault();
-          joinRoomButton.disabled = true;
-          const originalLabel = joinRoomButton.textContent;
-          joinRoomButton.textContent = getTranslation("join.loading");
-          try {
-            await joinExistingRoom();
-          } catch (error) {
-            alert(error.message);
-          } finally {
-            joinRoomButton.disabled = false;
-            joinRoomButton.textContent = originalLabel;
-          }
+          openPuzzle(sourceInput.value);
         });
 
         themeToggleButton.addEventListener("click", toggleTheme);
@@ -1937,10 +1791,7 @@ function renderHomePage(origin, preferredOrigin, ctcVideos) {
           button.addEventListener("click", () => {
             const source = button.getAttribute("data-ctc-puzzle-source");
             try {
-              window.location.href = buildLinkFromSource(source, {
-                usePuzzleRoom: false,
-                roomValue: ctcRoomInput.value
-              });
+              window.location.href = buildLinkFromSource(source);
             } catch (error) {
               alert(error.message);
             }
@@ -2514,8 +2365,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && isPuzzleRoute(pathname)) {
+      const redirectUrl = new URL(pathname + url.search, upstreamOrigin);
+      res.writeHead(302, { location: redirectUrl.toString() });
+      res.end();
+      return;
+    }
+
     if (req.method === "GET") {
-      await proxyUpstream(req, res, url, { inject: isPuzzleRoute(pathname) });
+      await proxyUpstream(req, res, url, { inject: false });
       return;
     }
 

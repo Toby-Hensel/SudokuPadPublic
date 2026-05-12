@@ -15,6 +15,7 @@
   })();
   const clientIdKey = `coop-client-id:${roomId}`;
   const nameKey = "coop-display-name";
+  const minimizedKey = `coop-dock-minimized:${puzzleId}`;
   const inviteLink = `${publicOrigin}/${encodeURIComponent(puzzleId)}?room=${encodeURIComponent(roomId)}&coop=1`;
   const syncPollIntervalMs = 1_000;
   const localReplayCheckMs = 250;
@@ -50,6 +51,7 @@
   ui.nameInput.value = state.name;
   setStatus("Connecting", "offline");
   setMeta(inviteLink);
+  setDockMinimized(localStorage.getItem(minimizedKey) === "1");
 
   ui.copyButton.addEventListener("click", async () => {
     await navigator.clipboard.writeText(inviteLink);
@@ -62,6 +64,11 @@
 
   ui.openButton.addEventListener("click", () => {
     window.open(inviteLink, "_blank", "noopener,noreferrer");
+  });
+
+  ui.toggleButton.addEventListener("click", () => {
+    const nextMinimized = !ui.dock.classList.contains("collab-dock--minimized");
+    setDockMinimized(nextMinimized);
   });
 
   ui.nameInput.addEventListener("change", () => {
@@ -121,6 +128,7 @@
           <div class="collab-dock__title">Co-op Room</div>
           <div class="collab-dock__status" data-state="offline">Connecting</div>
         </div>
+        <button class="collab-dock__toggle" type="button" aria-label="Minimize co-op room panel" title="Minimize">-</button>
       </div>
       <div class="collab-dock__body">
         <label class="collab-dock__label">
@@ -154,6 +162,7 @@
       meta: dock.querySelector(".collab-dock__meta"),
       copyButton: dock.querySelector(".collab-dock__button--primary"),
       openButton: dock.querySelector(".collab-dock__button--secondary"),
+      toggleButton: dock.querySelector(".collab-dock__toggle"),
       peers: dock.querySelector(".collab-dock__peers"),
       highlightLayer
     };
@@ -167,6 +176,14 @@
   function setMeta(text) {
     ui.meta.textContent = text;
     ui.meta.title = text;
+  }
+
+  function setDockMinimized(minimized) {
+    ui.dock.classList.toggle("collab-dock--minimized", minimized);
+    ui.toggleButton.textContent = minimized ? "+" : "-";
+    ui.toggleButton.setAttribute("aria-label", minimized ? "Expand co-op room panel" : "Minimize co-op room panel");
+    ui.toggleButton.title = minimized ? "Expand" : "Minimize";
+    localStorage.setItem(minimizedKey, minimized ? "1" : "0");
   }
 
   function renderPresence(payload) {

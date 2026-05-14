@@ -700,6 +700,8 @@ function getCoopHighlightPayloads(room) {
       col: highlight.col,
       rows: highlight.rows,
       cols: highlight.cols,
+      xRatio: highlight.xRatio,
+      yRatio: highlight.yRatio,
       updatedAt: highlight.updatedAt
     });
   }
@@ -2560,6 +2562,8 @@ async function handleCoopHighlight(req, res, url) {
   const col = Number(body.col);
   const rows = Math.max(1, Number(body.rows) || 9);
   const cols = Math.max(1, Number(body.cols) || 9);
+  const xRatio = Number(body.xRatio);
+  const yRatio = Number(body.yRatio);
 
   if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || row >= rows || col < 0 || col >= cols) {
     sendJson(res, 400, { error: "Invalid highlight coordinates." });
@@ -2582,6 +2586,8 @@ async function handleCoopHighlight(req, res, url) {
     col,
     rows,
     cols,
+    xRatio: Number.isFinite(xRatio) ? Math.max(0, Math.min(1, xRatio)) : null,
+    yRatio: Number.isFinite(yRatio) ? Math.max(0, Math.min(1, yRatio)) : null,
     updatedAt: Date.now()
   };
 

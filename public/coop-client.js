@@ -20,6 +20,7 @@
   const syncPollIntervalMs = 1_000;
   const localReplayCheckMs = 250;
   const requestTimeoutMs = 10_000;
+  const pointerBroadcastThrottleMs = 60;
 
   const state = {
     roomId,
@@ -42,7 +43,9 @@
     reconnectTimer: null,
     destroyed: false,
     peers: [],
-    remoteHighlights: new Map()
+    remoteHighlights: new Map(),
+    lastPointerSentAt: 0,
+    lastPointerKey: ""
   };
 
   sessionStorage.setItem(clientIdKey, state.clientId);
@@ -615,6 +618,18 @@
       marker.style.height = `${cellHeight}px`;
       marker.innerHTML = `<span class="collab-remote-highlight__label">${highlight.name || "Solver"}</span>`;
       ui.highlightLayer.appendChild(marker);
+
+      if (Number.isFinite(highlight.xRatio) && Number.isFinite(highlight.yRatio)) {
+        const cursor = document.createElement("div");
+        cursor.className = "collab-remote-cursor";
+        cursor.style.left = `${boardRect.left + boardRect.width * highlight.xRatio}px`;
+        cursor.style.top = `${boardRect.top + boardRect.height * highlight.yRatio}px`;
+        cursor.innerHTML = `
+          <span class="collab-remote-cursor__arrow"></span>
+          <span class="collab-remote-cursor__label">${highlight.name || "Solver"}</span>
+        `;
+        ui.highlightLayer.appendChild(cursor);
+      }
     }
   }
 
@@ -630,6 +645,8 @@
       col: Number(highlight.col),
       rows: Math.max(1, Number(highlight.rows) || 9),
       cols: Math.max(1, Number(highlight.cols) || 9),
+      xRatio: Number(highlight.xRatio),
+      yRatio: Number(highlight.yRatio),
       updatedAt: Number(highlight.updatedAt) || Date.now()
     };
 
@@ -641,7 +658,7 @@
     renderRemoteHighlights();
   }
 
-  async function sendBoardHighlight(event) {
+  async function sendBoardHighlight(event, options = {}) {
     if (state.applyingRemote || !state.roomId || !state.clientId) {
       return;
     }
@@ -661,8 +678,21 @@
     }
 
     const { rows, cols } = getBoardDimensions();
+    const xRatio = Math.max(0, Math.min(1, (event.clientX - boardRect.left) / boardRect.width));
+    const yRatio = Math.max(0, Math.min(1, (event.clientY - boardRect.top) / boardRect.height));
     const row = Math.max(0, Math.min(rows - 1, Math.floor(((event.clientY - boardRect.top) / boardRect.height) * rows)));
     const col = Math.max(0, Math.min(cols - 1, Math.floor(((event.clientX - boardRect.left) / boardRect.width) * cols)));
+    const pointerKey = `${row}:${col}:${xRatio.toFixed(3)}:${yRatio.toFixed(3)}`;
+
+    if (!options.force) {
+      if (pointerKey === state.lastPointerKey && Date.now() - state.lastPointerSentAt < pointerBroadcastThrottleMs) {
+        return;
+      }
+
+      if (Date.now() - state.lastPointerSentAt < pointerBroadcastThrottleMs) {
+        return;
+      }
+    }
 
     try {
       await collabFetch(`/api/coop/highlight/${encodeURIComponent(state.roomId)}`, {
@@ -676,12 +706,22 @@
           row,
           col,
           rows,
-          cols
+          cols,
+          xRatio,
+          yRatio
         })
       });
+      state.lastPointerSentAt = Date.now();
+      state.lastPointerKey = pointerKey;
     } catch (error) {
       console.error("Highlight broadcast failed:", error);
     }
+  }
+
+  function sendBoardCursor(event) {
+    sendBoardHighlight(event).catch((error) => {
+      console.error("Cursor broadcast failed:", error);
+    });
   }
 
   function patchProgressSaving() {
@@ -710,7 +750,12 @@
     }
 
     if (!puzzle.__coopHighlightPatched) {
-      document.addEventListener("pointerdown", sendBoardHighlight, true);
+      document.addEventListener("pointerdown", (event) => {
+        sendBoardHighlight(event, { force: true }).catch((error) => {
+          console.error("Highlight broadcast failed:", error);
+        });
+      }, true);
+      document.addEventListener("pointermove", sendBoardCursor, true);
       puzzle.__coopHighlightPatched = true;
     }
 

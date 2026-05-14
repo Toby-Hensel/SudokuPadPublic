@@ -197,6 +197,32 @@
   text-overflow: ellipsis;
 }
 
+.collab-remote-cursor {
+  position: fixed;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transform: translate(10px, 10px);
+}
+
+.collab-remote-cursor__arrow {
+  width: 0;
+  height: 0;
+  border-top: 13px solid #7cf5bf;
+  border-right: 9px solid transparent;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
+}
+
+.collab-remote-cursor__label {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(6, 16, 23, 0.94);
+  color: #eff7fb;
+  font: 700 11px/1.2 "Space Grotesk", "Segoe UI", sans-serif;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+}
+
 @media (max-width: 640px) {
   .collab-dock {
     top: 10px;
